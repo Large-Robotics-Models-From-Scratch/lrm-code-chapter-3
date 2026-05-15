@@ -1,0 +1,40 @@
+[project]
+name = "lrm-ch03-vla-backbone"
+version = "0.1.0"
+description = "Chapter 3 code: VLA backbone (SigLIP + SmolLM + fusion transformer) for 'Build a Large Robot Model (From Scratch)'"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Krishnam Gupta" },
+    { name = "Siddharth Singh" },
+    { name = "Vatsal Chanana" },
+]
+dependencies = [
+    "torch>=2.5",
+    "transformers>=4.45",
+    "lerobot>=0.2",
+    "huggingface-hub>=0.25",
+    "pillow>=10",
+    "numpy>=1.26",
+    "matplotlib>=3.8",
+    "rerun-sdk>=0.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 76
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
