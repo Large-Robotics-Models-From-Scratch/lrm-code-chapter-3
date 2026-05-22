@@ -1,5 +1,5 @@
 [project]
-name = "lrm-ch03-vla-backbone"
+name = "lrm-code-chapter-3"
 version = "0.1.0"
 description = "Chapter 3 code: VLA backbone (SigLIP + SmolLM + fusion transformer) for 'Build a Large Robot Model (From Scratch)'"
 requires-python = ">=3.12"

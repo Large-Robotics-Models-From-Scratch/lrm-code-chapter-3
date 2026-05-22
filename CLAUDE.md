@@ -1,4 +1,4 @@
-# lrm-ch03-vla-backbone — Claude Code project guide
+# lrm-code-chapter-3 — Claude Code project guide
 
 You are working on **Chapter 3** of "Build a Large Robot Model (From Scratch)" (Manning).
 

@@ -34,7 +34,7 @@ Cross-chapter decisions tracked here. Update with each significant architectural
 ### To chapter 4
 
 ```python
-from lrm_ch03_vla_backbone import VLABackbone
+from lrm_ch03 import VLABackbone
 
 backbone = VLABackbone(hidden_dim=512)
 hidden = backbone(image, instruction, state)
