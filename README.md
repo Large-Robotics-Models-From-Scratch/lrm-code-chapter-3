@@ -1,4 +1,4 @@
-# lrm-ch03-vla-backbone
+# lrm-code-chapter-3
 
 Companion code for **Chapter 3** of *Build a Large Robot Model (From Scratch)* (Manning).
 
@@ -32,8 +32,8 @@ Plus a **VQA training loop** that proves the backbone learned vision-language al
 
 ```bash
 # Clone
-git clone https://github.com/Large-Robotics-Models-From-Scratch/lrm-ch03-vla-backbone.git
-cd lrm-ch03-vla-backbone
+git clone https://github.com/Large-Robotics-Models-From-Scratch/lrm-code-chapter-3.git
+cd lrm-code-chapter-3
 
 # Install
 uv venv
@@ -49,7 +49,7 @@ ln -s ../lrm-code-agents/CLAUDE.md .claude/CLAUDE.md
 ## Repository layout
 
 ```
-lrm-ch03-vla-backbone/
+lrm-code-chapter-3/
 ├── models/
 │   ├── vision_encoder.py       # SigLIP wrapper, frozen, projects 768 → 512
 │   ├── language_backbone.py    # SmolLM wrapper + vocab expansion
@@ -69,7 +69,7 @@ lrm-ch03-vla-backbone/
 ## Hand-off contract to chapter 4
 
 ```python
-from lrm_ch03_vla_backbone import VLABackbone
+from lrm_ch03 import VLABackbone
 
 backbone = VLABackbone(hidden_dim=512)
 hidden = backbone(image, instruction, state)
@@ -87,7 +87,7 @@ hidden = backbone(image, instruction, state)
 
 ## Built on
 
-- **Chapter 2 repo**: [`lrm-ch02-simulation`](https://github.com/Large-Robotics-Models-From-Scratch/lrm-ch02-simulation) — the SO-100 simulation env and the `lerobot/svla_so100_pickplace` data loader
+- **Chapter 2 repo**: [`lrm-code-chapter-2`](https://github.com/Large-Robotics-Models-From-Scratch/lrm-code-chapter-2) — the SO-100 simulation env and the `lerobot/svla_so100_pickplace` data loader
 
 ## License
 

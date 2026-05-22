@@ -9,7 +9,7 @@ chapters:
 
 chapter_continuity:
   tone_percent: 50
-  ch2_repo_path: "../lrm-ch02-simulation"
+  ch2_repo_path: "../lrm-code-chapter-2"
 
 reminders:
   percent: 50  # remind at module/folder/chapter milestones, not every script
