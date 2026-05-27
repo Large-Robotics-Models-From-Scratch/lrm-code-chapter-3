@@ -26,7 +26,7 @@ Plus a **prompted attention visualization** that shows the backbone routes atten
 | Fusion | Concat + causal self-attention, 6 layers, 8 heads, dropout 0.1 |
 | Hidden dim | 512 |
 | Robot | SO-100 (6-DOF arm + 1 gripper) |
-| Camera input | `image_top` only (wrist added in Ch 6) |
+| Camera input | `observation.images.up` only (wrist added in Ch 6) |
 
 ## Setup
 
@@ -122,7 +122,7 @@ backbone = VLABackbone(hidden_dim=512)
 hidden = backbone(image, instruction, state)
 # image:       [B, 3, 224, 224]   top camera, preprocessed
 # instruction: list[str]          batch of B instructions
-# state:       [B, 7]             SO-100 state (6 joint positions + 1 gripper) per Ch 2
+# state:       [B, 6]             SO-101 state (5 joint positions + gripper) per Ch 2 Table 2.2
 # hidden:      [B, 196 + L + 1, 512]
 # tokenizer:   native SmolLM (49,152 vocab) — no expansion in Ch 3
 ```

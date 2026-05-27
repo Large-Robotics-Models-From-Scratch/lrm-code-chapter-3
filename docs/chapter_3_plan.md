@@ -2,9 +2,9 @@
 
 **Author**: Krishnam Gupta
 **Code repo**: `Large-Robotics-Models-From-Scratch/lrm-code-chapter-3`
-**Built on**: chapter 2 (`SO100Env`, `lerobot/svla_so100_pickplace`)
+**Built on**: chapter 2 (`from ch02 import make_pickplace_dataloader, normalize, denormalize`; dataset = `lerobot/svla_so101_pickplace`; sim env = `PickCubeSO100-v1`)
 **Hands off to**: chapter 4 (action head + action tokenization + vocab expansion all happen there)
-**Last updated**: 2026-05-18 (v3 — tokenization moved to ch 4, VQA replaced by prompted attention viz, projection-layer mentions added)
+**Last updated**: 2026-05-27 (v4 — aligned with Ch 2 verified facts: state_dim=6, camera keys `up`/`side`, dataset `svla_so101_pickplace`, image (3, 480, 640), SO-100 sim + SO-101 dataset framing)
 
 ## Archetype
 
@@ -66,7 +66,7 @@ This chapter runs end-to-end on **all three tracks**:
 
 Reader should have:
 - Completed chapter 2
-- Cached `lerobot/svla_so100_pickplace` locally (one-line load in chapter 2)
+- Cached `lerobot/svla_so101_pickplace` locally (one-line load in chapter 2)
 - Working `SO100Env` import from chapter 2 repo
 - ~5 GB free disk (for SigLIP + SmolLM model weights)
 - Optional: GPU with ≥6 GB VRAM (Colab T4 works; chapter still completes on CPU)
@@ -92,7 +92,7 @@ Three stories woven together:
 - Loading a frozen vision encoder
 - Wiring in a small language backbone
 - Fusing image, language, and state tokens
-- Validating alignment with a VQA probe
+- Visualizing language-driven attention
 ```
 
 ### Hook paragraphs (2 paragraphs)
@@ -123,34 +123,22 @@ Three stories woven together:
 
 ## Section 3.2: The eyes — vision encoder
 
-**Pages**: 7-9 (was 6-8; +1 page for the vision-encoder-taxonomy on-ramp added 2026-05-21)
-**Purpose**: Build the vision component. Establish a broad mental map of vision encoders first, then narrow to SigLIP, then build.
+**Pages**: 6-8
+**Purpose**: Build the vision component. Establish the pre-trained-and-frozen pattern. Validate the encoder visually.
 
 **Subsections**:
-- **3.2.0 What is a vision encoder, and what kinds exist** (1-1.5 pages — NEW intuition on-ramp)
-  - What "vision encoder" means generally — a neural network that turns pixels into vectors
-  - **Three big families** (concept box):
-    | Family | Training signal | Examples | What it's good at |
-    |---|---|---|---|
-    | Supervised classification | Labeled categories (ImageNet) | ResNet, EfficientNet, ViT-classification | Closed-vocabulary recognition |
-    | Self-supervised vision-only | No labels — reconstruct masked patches, contrastive on augmentations | DINOv2, MAE, SimCLR | Rich visual features without labels; great for downstream fine-tuning |
-    | Image-text contrastive | Image-caption pairs | CLIP, SigLIP, ALIGN | Vision features aligned with language; zero-shot recognition |
-  - **Why this taxonomy matters for VLA**: we need the third family. Robot policies must ground language ("red cube") in image regions. Self-supervised vision (DINOv2) gives richer features but lives in its own vector space, disconnected from text. Supervised classification labels won't help us understand novel instructions. Image-text contrastive encoders bridge the two.
-  - **A note on "self-supervised" learning** (1 paragraph): instead of needing human labels, the model invents its own learning signal — predict the next word in a sentence (GPT), or reconstruct masked patches in an image (MAE), or pull matching image-text pairs closer in embedding space (CLIP/SigLIP). Self-supervision is why pre-trained encoders exist at internet scale.
-  - **Honest aside**: production VLAs often combine families (OpenVLA uses both DINOv2 *and* SigLIP; π0 uses SigLIP-large alone). We pick one for simplicity.
-- 3.2.1 Why pre-trained, why frozen (½ page) — honest about what's inherited (shorter now since taxonomy section covered the "why pre-trained" angle)
-- 3.2.2 Why SigLIP specifically for our task (½ page) — narrow from family to model + 4-row comparison table (SigLIP vs CLIP vs DINOv2 vs raw ViT) + the 1-line verdict ("image-text alignment + sigmoid loss outperforms CLIP at same size")
+- 3.2.1 Why pre-trained, why frozen (1 page) — honest about what's inherited
+- 3.2.2 SigLIP in 2 paragraphs (concept box)
 - 3.2.3 Image → patches → tokens (1-2 pages, includes listing 3.1)
 - 3.2.4 Visualizing what SigLIP "sees" (1-2 pages, includes listing 3.2 + figure 3.3)
-- 3.2.5 Projecting to the common hidden dim (½ page) — justify "why 512" + name the projection layer concept ("a projection layer is just a single `nn.Linear(768, 512)` that translates between widths")
+- 3.2.5 Projecting to the common hidden dim (½ page) — justify "why 512" here + name the projection layer concept on first use ("a projection layer is just a single `nn.Linear(768, 512)` that translates SigLIP's native width into our common width")
 
-**Concept boxes** (4):
-- Three families of vision encoders (3.2.0) — supervised / self-supervised / image-text contrastive
+**Concept boxes** (3, down from 4):
 - Pre-trained-and-frozen (3.2.1) — "what we inherit and what we don't"
 - ViT patch tokenization (3.2.3) — "your image as a sentence of patches"
 - Attention rollout (3.2.4) — "the model's gaze, made visible"
 
-(SigLIP gets a focused half-page narrowing section at 3.2.2, not a separate concept box — it leans on the taxonomy already established.)
+(SigLIP merged into prose in 3.2.2, not a separate concept box.)
 
 **Listings**:
 - 3.1: Loading and freezing SigLIP (~30 lines)
@@ -244,7 +232,7 @@ Three stories woven together:
 
 > We've built a `VLABackbone`, but we haven't trained anything yet beyond the projection layers' default initialization. Does the backbone actually attend to instruction-relevant regions of the scene? We can answer that with a single forward pass and an attention rollout — no training, no labels, no VQA dataset.
 >
-> The recipe: take one SO-100 frame from `svla_so100_pickplace`. Pass it through the backbone three times with three different instructions: "pick the red cube", "pick the blue cube", "show the gripper". For each pass, run attention rollout on the SigLIP layers (chapter 3.2.4 already wrote this) and overlay the heatmap on the original frame.
+> The recipe: take one SO-100 frame from `svla_so101_pickplace`. Pass it through the backbone three times with three different instructions: "pick the red cube", "pick the blue cube", "show the gripper". For each pass, run attention rollout on the SigLIP layers (chapter 3.2.4 already wrote this) and overlay the heatmap on the original frame.
 >
 > If the backbone is doing its job, the three heatmaps should differ: "red cube" lights up red-cube patches, "blue cube" lights up blue-cube patches, "gripper" lights up the gripper. If they're identical, the language conditioning isn't reaching the vision features — and we have a bug to fix before chapter 4.
 >
@@ -273,12 +261,15 @@ The v2 plan included a full VQA training loop (~80 LOC) and 2-3 pages of treatme
   transformer that processes a single multimodal token sequence.
 - Freezing the vision encoder lets a small dataset benefit from large-scale
   pre-training without overfitting.
-- Action tokens reserved in the language vocabulary preserve the contract between
-  the backbone and any action head added later.
-- A VQA probe validates that vision and language are aligned in the shared space
-  before attaching task-specific output heads.
 - Causal self-attention over a concatenated sequence is the simplest fusion that
-  generalizes from text-only LLMs to multimodal models.
+  generalizes from text-only LLMs to multimodal models, and sets up the
+  autoregressive action prediction that chapter 4 attaches.
+- A prompted attention visualization (no training) demonstrates the frozen
+  pre-trained components route attention to instruction-relevant image patches
+  before any action head is attached — diagnostic evidence the backbone works.
+- The SO-100 sim environment, the SO-101 dataset, and the SO-101 hardware share
+  the same 6-DOF observation/action interface, so policies transfer across all
+  three with calibration handled in chapter 9.
 ```
 
 ### In the wild sidebar: production VLA backbones
@@ -300,8 +291,8 @@ Same anatomy. You scaled differently.
 | Decision | Choice | Why |
 |---|---|---|
 | Vision encoder | SigLIP-base/16 (224) | Image-text aligned, 196 patch tokens |
-| Camera input | `image_top` only (top-down arm-mounted view) | Single stream for chapter 3; wrist camera added in chapter 6 |
-| Image preprocessing | Center-crop 480×640 → resize 224×224 | Match SigLIP input size (relevant for sim-to-real in ch 9) |
+| Camera input | `observation.images.up` only (top-down camera) | Single stream for chapter 3; `observation.images.side` (wrist) added in chapter 6 |
+| Image preprocessing | Resize 480×640 → 224×224 (Ch 2 ships native dataset resolution; Ch 3 resizes for SigLIP) | Match SigLIP input size |
 | Language backbone | SmolLM-135M | Small, OSS, runs on T4, good tokenizer |
 | Tokenizer changes in ch 3 | **None** — native SmolLM tokenizer | Vocab expansion moved to ch 4 |
 | Fusion mechanism | Concat + causal self-attention (RT-2 style; Brohan et al. 2023) | Simpler "from scratch" build, matches OpenVLA |
@@ -309,7 +300,9 @@ Same anatomy. You scaled differently.
 | Attention heads | 8 (64-dim per head) | Standard ratio for d=512 |
 | Fusion transformer layers | 6 | Fits T4; chapter 6 explores scaling |
 | Dropout | 0.1 in fusion transformer | Standard transformer regularization |
-| State dim | 6 (5 arm + 1 gripper) | SO-100 native |
+| State dim | **6** (5 SO-101 joint positions + gripper position; verified per Ch 2 Table 2.2) | SO-100/101 native; matches dataset |
+| Action dim (consumed by Ch 4) | 6 (matches dataset action format) | Ch 4 owns the action head |
+| Sim env framing | `PickCubeSO100-v1` (ManiSkill3 ships SO-100 in sim) | SO-100 sim + SO-101 dataset + SO-101 hardware all share 6-DOF interface (per Ch 2 callout) |
 
 **Deferred to ch 4** (was previously in ch 3 v2):
 - Action tokens, 256 bins per joint, 1,536 reserved vocab IDs
@@ -321,16 +314,22 @@ Same anatomy. You scaled differently.
 ## Hand-off contract to chapter 4
 
 ```python
-from lrm_ch03 import VLABackbone
+from ch03 import VLABackbone
 
 backbone = VLABackbone(hidden_dim=512)
 hidden = backbone(image, instruction, state)
-# image:       [B, 3, 224, 224]   top camera, preprocessed
-# instruction: List[str]          batch of B instructions
-# state:       [B, 6]             SO-100 joint positions
+# image:       [B, 3, 224, 224]   resized from Ch 2's (3, 480, 640) by ch03.preprocess
+# instruction: list[str]          batch of B instructions (`batch["task"]` from ch02 loader)
+# state:       [B, 6]             SO-101 joint positions (z-scored by ch02 collate)
 # hidden:      [B, 196 + L + 1, 512]
 # tokenizer:   native SmolLM (49,152 vocab) — no expansion in ch 3
 ```
+
+Ch 3 imports from Ch 2 via:
+```python
+from ch02 import make_pickplace_dataloader, normalize, denormalize
+```
+The dataloader yields `(3, 480, 640)` float32 images in `[0, 1]`. Ch 3's `preprocess.py` resizes to `(3, 224, 224)` for SigLIP. The `task` field per batch is a `list[str]` from Ch 2's collate; Ch 3 uses it as the language input.
 
 Chapter 4 owns the action half of the story:
 - Expand SmolLM's vocab by 1,536 action token IDs
@@ -419,7 +418,7 @@ Total reader-facing code: ~270 LOC + tests ~120 LOC.
 |---|---|
 | SmolLM tokenizer expansion breaks HF auto-config | Early smoke test in `tests/test_vocab_expansion.py` |
 | SigLIP attention rollout viz finicky across versions | Pin transformers to a tested version |
-| VQA synthetic data feels contrived | Use real frames from `svla_so100_pickplace`; design questions that require vision (not answerable from state alone) |
+| VQA synthetic data feels contrived | Use real frames from `svla_so101_pickplace`; design questions that require vision (not answerable from state alone) |
 | 415 LOC across 8 listings might exceed Manning code budget | Compress 3.4 (LanguageBackbone forward) and 3.5 (StateEncoder) into prose; target 6-7 listings |
 | Cross-chapter import from Ch 2 repo could break | Pin `lrm-code-chapter-2` to specific git SHA |
 | 7 concept boxes still high vs Manning 3-5 ideal | Some are tiny (1 paragraph). Final draft may inline 1-2 more. |
@@ -464,7 +463,7 @@ Driven by 9-persona panel critique on 2026-05-14:
 
 ## Cross-references
 
-- **Builds on**: chapter 2's `SO100Env` and `LeRobotDataset.from_pretrained("lerobot/svla_so100_pickplace")`
+- **Builds on**: chapter 2's `SO100Env` and `LeRobotDataset.from_pretrained("lerobot/svla_so101_pickplace")`
 - **Hands off to**: chapter 4's discrete action head will attach to the right end of the backbone's output
 - **Recalls from chapter 1**: figure 1.7 (the Mental Model) — same anatomy, now built
 - **Wiki**: see `~/Desktop/wiki/lrm-book/ch3-outline-detailed.md` for the full intuition-and-explainer outline

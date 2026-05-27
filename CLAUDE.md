@@ -15,8 +15,8 @@ This repo contains the code for **the VLA backbone**: a frozen SigLIP vision enc
 | Fusion | Concat + causal self-attention, 6 layers, 8 heads, dropout 0.1 | `src/ch03/fusion_transformer.py` |
 | Hidden dim | 512 | All projections target 512 |
 | Robot | SO-100 (6-DOF arm + 1 gripper) | Ch 2 hand-off |
-| Camera input | `image_top` only | Wrist camera added in Chapter 6 |
-| State dim | 7 (6 joint positions + gripper state) — verify against Sid's final Ch 2 export | `src/ch03/state_encoder.py` |
+| Camera input | `observation.images.up` only | Wrist camera added in Chapter 6 |
+| State dim | **6** (5 SO-101 joint positions + gripper position; verified per Ch 2 pr-7 Table 2.2) | `src/ch03/state_encoder.py` |
 | Action dim (consumed by Ch 4) | 6 (matches dataset action format) | Ch 4 owns |
 
 **Deferred to Chapter 4** (do NOT introduce here):
