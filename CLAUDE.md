@@ -27,10 +27,11 @@ This repo contains the code for **the VLA backbone**: a frozen SigLIP vision enc
 ## Hand-off contracts
 
 **From Chapter 2** (`from ch02 import make_pickplace_dataloader, normalize, denormalize`):
-- Batches with `observation.state: (B, 7) float32` z-scored
-- `observation.images.top: (B, 3, 224, 224) float32` in `[0, 1]`
-- `observation.images.wrist: (B, 3, 224, 224) float32` (available; we use `top` only in Ch 3)
+- Batches with `observation.state: (B, 6) float32` z-scored (5 arm joints + gripper)
+- `observation.images.up: (B, 3, 480, 640) float32` in `[0, 1]` (Ch 3 resizes to 224x224)
+- `observation.images.side: (B, 3, 480, 640) float32` (available; we use `up` only in Ch 3)
 - `action: (B, 6) float32` z-scored — Ch 3 doesn't predict actions, just hands hidden states to Ch 4
+- `task: list[str]` — the instruction, fed to the language backbone
 
 **To Chapter 4**:
 ```python
