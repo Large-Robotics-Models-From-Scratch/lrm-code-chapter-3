@@ -22,10 +22,11 @@ Cross-chapter decisions tracked here. Update with each significant architectural
 | Decision | Why | Affects downstream |
 |---|---|---|
 | Vision encoder = SigLIP-base/16 (224) | Image-text aligned, 196 patch tokens | Ch 4-10; see `docs/decisions/vision-encoder-choice.md` |
-| Vision encoder frozen | Small dataset, inherit pretrain | Ch 4-5 (Ch 6 may LoRA-fine-tune) |
+| Vision encoder frozen + pinned to `eval()` | Small dataset, inherit pretrain; `train()` override keeps SigLIP in eval so dropout never corrupts the "frozen" features during Ch 4 training | Ch 4-5 (Ch 6 may LoRA-fine-tune) |
+| SigLIP loaded `attn_implementation="sdpa"` by default | SDPA is the fast/low-memory path for training; the attention-rollout figure passes `attn_implementation="eager"` because only eager exposes per-layer maps | Ch 4-10 training speed on T4 |
 | Camera input = `observation.images.up` only | Single-stream simplicity | Ch 6 adds `observation.images.side` |
-| Image preprocessing | Near-passthrough — Ch 2 already ships `[3, 224, 224]` float in `[0, 1]` | All later chapters |
-| Language backbone = SmolLM-135M | Small, OSS, T4-fit | Ch 4-10 |
+| Image preprocessing | Ch 2 ships `[3, 480, 640]` float in `[0, 1]`; `preprocess_image` resizes to `[3, 224, 224]`. SigLIP `[-1,1]` normalization lives inside `VisionEncoder` | All later chapters |
+| Language backbone = SmolLM-135M, **trainable** (not frozen) | A small LM benefits from fine-tuning on instructions; Ch 4 trains it end-to-end with the action head. Only the vision encoder is frozen in Ch 3 | Ch 4 trains SmolLM; Ch 6 may LoRA |
 | **No vocab expansion in Ch 3** | Vocab expansion + action tokens belong to Ch 4 (action head story) | Ch 4 calls `add_tokens` + `resize_token_embeddings` as its first step |
 | Hidden dim = 512 | Bridges SigLIP 768 + SmolLM 576; multiple of 64 for 8 heads | All later chapters |
 | Attention heads = 8 (64-dim each) | Standard for d=512 | All later chapters |

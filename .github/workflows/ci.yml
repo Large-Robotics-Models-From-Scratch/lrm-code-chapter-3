@@ -11,8 +11,8 @@ jobs:
     steps:
       # GitHub Actions runners ship with ~25 GB of pre-installed SDKs
       # (Android, .NET, Haskell, GHC) we don't need. Freeing them up
-      # front gives us room for the torch + CUDA wheels lerobot pulls
-      # (~4 GB) without resolver gymnastics. Runs in under a minute.
+      # front gives us room for the torch wheel (~2 GB) the unit tests
+      # import. Runs in under a minute.
       - name: Free disk space
         uses: jlumbroso/free-disk-space@main
         with:
@@ -29,8 +29,12 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install dev + data deps
-        run: pip install -e ".[dev,data]"
+      # Install dev only, NOT the data extra: lerobot 0.5.1 pins
+      # huggingface-hub>=1.0 while transformers pins <1.0, so the two
+      # cannot co-resolve. The unit tests are pure torch + a transformers
+      # import (no lerobot), so dev is all CI needs.
+      - name: Install dev deps
+        run: pip install -e ".[dev]"
 
       - name: Lint
         run: ruff check src tests
