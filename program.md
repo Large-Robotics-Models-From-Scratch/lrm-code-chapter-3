@@ -66,12 +66,12 @@ For each of the 7 listings in `docs/chapter_3_plan.md`, in order:
    | Listings | Module | Reader role |
    |---|---|---|
    | 3.1 | `src/ch03/vision_encoder.py` (SigLIP load + freeze + project) | type-along |
-   | 3.2 | `src/ch03/viz_attention.py` (attention rollout) | provided utility |
+   | 3.2 | `src/ch03/viz_similarity.py` (patch self-similarity) | provided utility |
    | 3.3 | `src/ch03/language_backbone.py` (SmolLM, no vocab expansion) | type-along |
    | 3.4 | `src/ch03/state_encoder.py` (6-dim → 512 MLP) | type-along |
    | 3.5 | `src/ch03/fusion_transformer.py` (concat + causal self-attention) | type-along |
    | 3.6 | `src/ch03/vla_backbone.py` (compose the above) | type-along |
-   | 3.7 | `src/ch03/viz_prompted_attention.py` (3-prompt attention grid) | provided utility |
+   | 3.7 | `src/ch03/viz_similarity.py` (tracking grid: self-sim across frames) | provided utility |
 
 3. **Mirror in the notebook**.
 4. **Write the code** matching the plan exactly: same variable names, same annotations, same line ordering.
@@ -101,7 +101,7 @@ Run `chapter-continuity` after any change to the export surface.
 
 ## 5. Figures
 
-The chapter plan lists 6 figures (3.1-3.6). Figure 3.1 is the book-wide roadmap recap with the Chapter 3 stage highlighted — reuse the figure-1.7 source rather than re-rendering. The other five are produced inside `notebooks/ch03.ipynb` using helper functions in `src/ch03/viz_attention.py` and `src/ch03/viz_prompted_attention.py`, exported to `figures/` for the chapter draft.
+The chapter plan lists 6 figures (3.1-3.6). Figure 3.1 is the book-wide roadmap recap with the Chapter 3 stage highlighted — reuse the figure-1.7 source rather than re-rendering. The other five are produced inside `notebooks/ch03.ipynb` using helper functions in `src/ch03/viz_similarity.py`, exported to `figures/` for the chapter draft.
 
 For each figure:
 - The plotting helper lives in `src/ch03/` so it is importable and testable
