@@ -22,10 +22,11 @@ Cross-chapter decisions tracked here. Update with each significant architectural
 | Decision | Why | Affects downstream |
 |---|---|---|
 | Vision encoder = SigLIP-base/16 (224) | Image-text aligned, 196 patch tokens | Ch 4-10; see `docs/decisions/vision-encoder-choice.md` |
-| Vision encoder frozen | Small dataset, inherit pretrain | Ch 4-5 (Ch 6 may LoRA-fine-tune) |
+| Vision encoder frozen + pinned to `eval()` | Small dataset, inherit pretrain; `train()` override keeps SigLIP in eval so dropout never corrupts the "frozen" features during Ch 4 training | Ch 4-5 (Ch 6 may LoRA-fine-tune) |
+| Frozen-vision visualization = **patch self-similarity** (not attention rollout) | Deep-research verdict (2026-06-15): on a CLS-less contrastive encoder, rollout has no CLS row to read and deep-layer token mixing means attention no longer points to input patches; self-similarity (cosine sim of a query patch to all patches, on the raw 768-dim SigLIP features) is crisper, more honest, less code, and transfers to the DINOv2 exercise. No `output_attentions`/eager needed — encoder always SDPA, returns `[B,196,512]` | Ch 3 figures 3.3/3.6; viz_similarity.py |
 | Camera input = `observation.images.up` only | Single-stream simplicity | Ch 6 adds `observation.images.side` |
-| Image preprocessing | Near-passthrough — Ch 2 already ships `[3, 224, 224]` float in `[0, 1]` | All later chapters |
-| Language backbone = SmolLM-135M | Small, OSS, T4-fit | Ch 4-10 |
+| Image preprocessing | Ch 2 ships `[3, 480, 640]` float in `[0, 1]`; `preprocess_image` resizes to `[3, 224, 224]`. SigLIP `[-1,1]` normalization lives inside `VisionEncoder` | All later chapters |
+| Language backbone = SmolLM-135M, **trainable** (not frozen) | A small LM benefits from fine-tuning on instructions; Ch 4 trains it end-to-end with the action head. Only the vision encoder is frozen in Ch 3 | Ch 4 trains SmolLM; Ch 6 may LoRA |
 | **No vocab expansion in Ch 3** | Vocab expansion + action tokens belong to Ch 4 (action head story) | Ch 4 calls `add_tokens` + `resize_token_embeddings` as its first step |
 | Hidden dim = 512 | Bridges SigLIP 768 + SmolLM 576; multiple of 64 for 8 heads | All later chapters |
 | Attention heads = 8 (64-dim each) | Standard for d=512 | All later chapters |
@@ -33,7 +34,7 @@ Cross-chapter decisions tracked here. Update with each significant architectural
 | Fusion layers = 6 | Fits T4 with headroom | Ch 6 may scale |
 | Dropout = 0.1 in fusion transformer | Standard regularization | All later chapters |
 | Token order = `[image_patches (196), lang_tokens (L), state (1)]` | Causal attention left-to-right; Ch 4 appends action positions at the right | Ch 4 appends 6×K action token slots |
-| Sanity check = prompted attention visualization (no training) | Replaces VQA training loop from v1/v2; lighter, same pedagogical payoff | — |
+| Sanity check = patch self-similarity (no training) | Frozen SigLIP already groups object regions: a cube-query patch lights up the cube. Replaces VQA training (v1/v2) and the prompted/object-attention rollout (v5) | — |
 
 ## Hand-off contracts
 

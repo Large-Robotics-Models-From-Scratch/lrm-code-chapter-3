@@ -22,6 +22,12 @@ def dummy_instructions():
 
 @pytest.fixture
 def dummy_state(request):
-    """[2, state_dim] random tensor; defaults to state_dim=7 (Ch 2 hand-off)."""
-    state_dim = getattr(request, "param", 7)
+    """[2, state_dim] tensor; defaults to state_dim=6 (Ch 2 Table 2.2)."""
+    state_dim = getattr(request, "param", 6)
     return torch.rand(2, state_dim)
+
+
+@pytest.fixture
+def dummy_raw_image_batch():
+    """[2, 3, 480, 640] in [0, 1] — Chapter 2's native dataloader shape."""
+    return torch.rand(2, 3, 480, 640)
