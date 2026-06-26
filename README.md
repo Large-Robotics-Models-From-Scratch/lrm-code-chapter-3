@@ -2,31 +2,32 @@
 
 Companion code for **Chapter 3** of *Build a Large Robot Model (From Scratch)* (Manning).
 
-This chapter builds the **VLA backbone**: a frozen SigLIP vision encoder + a SmolLM-135M language backbone + a state encoder + a multimodal fusion transformer. The output is a sequence of contextualized hidden states ready for an action head (added in Chapter 4).
+This chapter builds the **VLA backbone**: a frozen SigLIP vision encoder + a SmolLM2-135M language backbone + a state encoder, fused by **unified embedding**. The two camera views and the state are projected and spliced into the language backbone's own token stream, so the pretrained backbone is the fuser - there is no separate fusion module on the main path. The output is a sequence of contextualized hidden states ready for an action head (added in Chapter 4).
 
 ## What you build
 
 ```
-image  ──▶  VisionEncoder (SigLIP, frozen)         ──▶  [B, 196, 512]
-text   ──▶  LanguageBackbone (SmolLM-135M, native) ──▶  [B,  L,  512]
-state  ──▶  StateEncoder (MLP)                     ──▶  [B,  1,  512]
-              concat + causal self-attention
+images ──▶  VisionEncoder (SigLIP, frozen, 2 cams) ──▶  [B, 392, 576]
+text   ──▶  LanguageBackbone (SmolLM2-135M)        ──▶  [B,  L,  576]
+state  ──▶  StateEncoder (MLP)                     ──▶  [B,  1,  576]
+        masked_scatter splice into the backbone's own stream
+        (the pretrained backbone fuses; no separate fusion module)
                           ▼
-                    [B, 196+L+1, 512]
+                    [B, 392+L+1, 576]
 ```
 
-Plus a **prompted attention visualization** that shows the backbone routes attention to instruction-relevant patches before any action head is attached — diagnostic only, no training.
+Plus a **patch self-similarity visualization** that shows the frozen vision encoder localizes objects before any action head is attached - diagnostic only, no training.
 
-## Locked architecture (Ch 3 plan v3)
+## Locked architecture (Ch 3 plan v5)
 
 | Component | Choice |
 |---|---|
 | Vision encoder | SigLIP-base/16 (frozen) |
-| Language backbone | SmolLM-135M (native tokenizer; **no vocab expansion** — that's Ch 4) |
-| Fusion | Concat + causal self-attention, 6 layers, 8 heads, dropout 0.1 |
-| Hidden dim | 512 |
+| Language backbone | SmolLM2-135M (native tokenizer; **no vocab expansion** - that's Ch 4) |
+| Fusion | Unified embedding: image and state tokens spliced into the backbone's stream via `masked_scatter`; the pretrained backbone fuses (no separate fusion module on the main path) |
+| Hidden dim | 576 (the backbone's native width) |
 | Robot | SO-100 (6-DOF arm + 1 gripper) |
-| Camera input | `observation.images.up` only (wrist added in Ch 6) |
+| Camera input | both `observation.images.up` and `observation.images.side` (two cameras, 392 image tokens = 2 x 196) |
 
 ## Setup
 
@@ -83,10 +84,10 @@ lrm-code-chapter-3/
 ├── src/ch03/                       # Importable Python package (the export contract)
 │   ├── __init__.py
 │   ├── vision_encoder.py           # PR 2 — SigLIP load + freeze + project
-│   ├── language_backbone.py        # PR 3 — SmolLM, native tokenizer
-│   ├── state_encoder.py            # PR 4 — 6→512 MLP
-│   ├── fusion_transformer.py       # PR 4 — concat + causal self-attention
-│   ├── vla_backbone.py             # PR 5 — composes the above
+│   ├── language_backbone.py        # PR 3 — SmolLM2, native tokenizer
+│   ├── state_encoder.py            # PR 4 — 6→576 MLP
+│   ├── fusion_transformer.py       # optional separate-encoder fusion exercise (off main path)
+│   ├── vla_backbone.py             # PR 5 — UnifiedEmbeddingBackbone, composes the above
 │   ├── viz_attention.py            # PR 2 — attention rollout
 │   ├── viz_prompted_attention.py   # PR 6 — 3-prompt attention grid
 │   └── preprocess.py               # PR 5 — image preprocessing
@@ -116,16 +117,19 @@ lrm-code-chapter-3/
 ## Hand-off contract to chapter 4
 
 ```python
-from ch03 import VLABackbone
+from ch03 import UnifiedEmbeddingBackbone
 
-backbone = VLABackbone(hidden_dim=512)
-hidden = backbone(image, instruction, state)
-# image:       [B, 3, 224, 224]   top camera, preprocessed
-# instruction: list[str]          batch of B instructions
-# state:       [B, 6]             SO-101 state (5 joint positions + gripper) per Ch 2 Table 2.2
-# hidden:      [B, 196 + L + 1, 512]
-# tokenizer:   native SmolLM (49,152 vocab) — no expansion in Ch 3
+backbone = UnifiedEmbeddingBackbone()
+input_ids = backbone.build_input_ids(text_ids)
+hidden = backbone(images, input_ids, state)
+# images:    [B, 2, 3, 224, 224]   two cameras (up + side), preprocessed
+# input_ids: list[int]             image + text + state template from build_input_ids
+# state:     [B, 6]                SO-101 state (5 joint positions + gripper) per Ch 2 Table 2.2
+# hidden:    [B, 392 + L + 1, 576]
+# tokenizer: native SmolLM (49,152 vocab) - no expansion in Ch 3
 ```
+
+`fusion_transformer.py` is the optional separate-encoder fusion exercise (Exercise 3.4), kept off the main path; the shipped backbone fuses by splicing image and state tokens into the language backbone's own stream.
 
 Chapter 4's first step: expand the vocab with 1,536 action token IDs and `resize_token_embeddings`. That belongs to Ch 4, not here.
 

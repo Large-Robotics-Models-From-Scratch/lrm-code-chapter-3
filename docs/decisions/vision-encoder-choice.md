@@ -13,7 +13,7 @@
 The vision encoder must:
 1. Be **pre-trained** at internet scale (we have 50 episodes of SO-100 data, not enough to train one)
 2. Produce representations **aligned with language** (the policy must ground "red cube" in image regions)
-3. Be **small enough** to load alongside SmolLM-135M on a Colab T4 (~12 GB)
+3. Be **small enough** to load alongside SmolLM2-135M on a Colab T4 (~12 GB)
 4. Have **permissive license** (Apache 2.0 / MIT)
 5. Have **clean HuggingFace Transformers integration** (no custom loader code)
 6. Have **active maintenance** so the API isn't a moving target
@@ -34,7 +34,7 @@ The vision encoder must:
 
 - **Sigmoid loss > softmax loss** at the same model size. Zhai et al. 2023 ablations show consistent improvement across batch sizes. The sigmoid loss treats each (image, text) pair independently, avoiding the dependence on giant negative-sample batches that CLIP requires.
 - **Language alignment is decisive for VLA**. The reader's policy will train to map "pick the red cube" to motor commands. The vision encoder must already encode "red" and "cube" in vectors close to the language model's embeddings of those words. SigLIP delivers this; DINOv2 doesn't.
-- **86M params fits the T4 budget** alongside SmolLM-135M (~270 MB) with room for the fusion transformer activations.
+- **86M params fits the T4 budget** alongside SmolLM2-135M (~270 MB) with room for the fusion transformer activations.
 - **First-class HuggingFace Transformers integration** — `AutoModel.from_pretrained("google/siglip-base-patch16-224")` works out of the box.
 - **Wide community adoption** — π0, PaliGemma, SmolVLA all use SigLIP. Reader familiarity helps when they read papers later.
 

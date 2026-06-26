@@ -1,5 +1,7 @@
 # Chapter 3 Software Design
 
+> **Superseded by v5**: the shipped backbone is `UnifiedEmbeddingBackbone` (not `VLABackbone`), language model is `SmolLM2-135M`, hidden width is **576** (the backbone's native width, no down-projection to 512), two cameras give **392** image tokens, and fusion is a `masked_scatter` unified-embedding splice into the language backbone's own stream (the pretrained backbone is the fuser; `fusion_transformer.py` is only the optional separate-encoder exercise). Output contract: `[B, 392 + L + 1, 576]`. The APIs below are corrected for the load-bearing facts; some prose still reflects the older single-camera / separate-fusion plan.
+
 Companion to `chapter_3_plan.md`. The plan locks the *what* — listings, exports, prose mapping. This doc locks the *how* — module APIs, notebook architecture, test strategy, dependency pinning, agent prompt.
 
 If you change anything in this doc that affects the Ch 4 export contract, update `chapter_3_plan.md` and `../lrm-book/chapter_3/chapter_3_structure_and_plan.md` in the same commit.
@@ -20,7 +22,7 @@ Two paths, same end state — the reader runs `notebooks/ch03.ipynb` against the
 
 **Type-along** listings (vision encoder, language backbone, state encoder, fusion transformer, VLA backbone) live in the notebook namespace — the reader writes them, subsequent cells call their version. A byte-for-byte equivalent exists in `src/ch03/<module>.py` but is independent (no live binding) and serves tests, Ch 4 imports, and editor cross-reference.
 
-**Provided utility** listings (attention rollout viz, prompted attention viz) are one-line imports from the package.
+**Provided utility** listings (patch self-similarity viz, tracking viz) are one-line imports from the package.
 
 ### Figures
 
@@ -37,14 +39,14 @@ The chapter plan's module mapping is the starting point. This section pins every
 Re-exports the Ch 4 contract symbols at the package root.
 
 ```python
-from ch03.vla_backbone import VLABackbone
+from ch03.vla_backbone import UnifiedEmbeddingBackbone
 from ch03.vision_encoder import VisionEncoder
 from ch03.language_backbone import LanguageBackbone
 from ch03.state_encoder import StateEncoder
-from ch03.fusion_transformer import FusionTransformer
+from ch03.fusion_transformer import FusionTransformer  # optional exercise only
 
 __all__ = [
-    "VLABackbone",
+    "UnifiedEmbeddingBackbone",
     "VisionEncoder",
     "LanguageBackbone",
     "StateEncoder",
@@ -59,32 +61,41 @@ class VisionEncoder(nn.Module):
     def __init__(
         self,
         model_name: str = "google/siglip-base-patch16-224",
-        hidden_dim: int = 512,
+        hidden_dim: int = 576,
     ) -> None: ...
 
     def forward(
         self,
         images: torch.Tensor,  # [B, 3, 224, 224] float in [0, 1]
         output_attentions: bool = False,
-    ) -> torch.Tensor:  # [B, 196, 512]
+    ) -> torch.Tensor:  # [B, 196, 576] per camera
         ...
 ```
 
-SigLIP weights frozen via `requires_grad = False`. Single `nn.Linear(768, 512)` projection trainable.
+SigLIP weights frozen via `requires_grad = False`. Single `nn.Linear(768, 576)` projection trainable.
 
-### `src/ch03/viz_attention.py` (listing 3.2)
+### `src/ch03/viz_similarity.py` (listings 3.2 and 3.7)
+
+Patch self-similarity on the raw frozen SigLIP features (chosen over
+attention rollout per the 2026-06-15 deep-research verdict: rollout has
+no CLS row on a CLS-less encoder and deep-layer token mixing breaks it).
 
 ```python
-def attention_rollout(
-    attentions: list[torch.Tensor],  # one per layer, each [B, H, N, N]
-    discard_ratio: float = 0.0,
-) -> torch.Tensor:  # [B, N, N] composed
-    ...
+def patch_self_similarity(
+    features: torch.Tensor,  # [196, 768] raw SigLIP features for one frame
+    query_row: int, query_col: int,
+) -> torch.Tensor:  # [14, 14] cosine sim of the query patch to all patches
 
-def overlay_heatmap(
-    image: torch.Tensor,  # [3, 224, 224]
-    rollout: torch.Tensor,  # [N, N], use row 0 (CLS) → columns 1: are patches
-    save_path: str | None = None,
+def similarity_grid(          # listing 3.2 / figure 3.3
+    vision_encoder, image,    # [3, H, W] in [0, 1]
+    queries,                  # list of (row, col, label), e.g. cube + arm
+    save_path=None,
+) -> matplotlib.figure.Figure: ...
+
+def tracking_grid(            # listing 3.7 / figure 3.6
+    vision_encoder, frames,   # list of [3, H, W]
+    queries,                  # one (row, col) per frame; the object moves
+    labels=None, save_path=None,
 ) -> matplotlib.figure.Figure: ...
 ```
 
@@ -94,8 +105,8 @@ def overlay_heatmap(
 class LanguageBackbone(nn.Module):
     def __init__(
         self,
-        model_name: str = "HuggingFaceTB/SmolLM-135M",
-        hidden_dim: int = 512,
+        model_name: str = "HuggingFaceTB/SmolLM2-135M",
+        hidden_dim: int = 576,
     ) -> None: ...
 
     def tokenize(
@@ -107,7 +118,7 @@ class LanguageBackbone(nn.Module):
     def forward(
         self,
         instructions: list[str],
-    ) -> tuple[torch.Tensor, torch.Tensor]:  # (hidden [B,L,512], mask [B,L])
+    ) -> tuple[torch.Tensor, torch.Tensor]:  # (hidden [B,L,576], mask [B,L])
         ...
 ```
 
@@ -119,26 +130,28 @@ class LanguageBackbone(nn.Module):
 class StateEncoder(nn.Module):
     def __init__(
         self,
-        state_dim: int = 7,  # SO-100: 6 joints + 1 gripper position (per Ch 2)
-        hidden_dim: int = 512,
+        state_dim: int = 6,  # SO-100: 5 arm joints + 1 gripper (per Ch 2)
+        hidden_dim: int = 576,
     ) -> None: ...
 
     def forward(
         self,
         state: torch.Tensor,  # [B, state_dim]
-    ) -> torch.Tensor:  # [B, 1, 512]
+    ) -> torch.Tensor:  # [B, 1, 576]
         ...
 ```
 
-2-layer MLP (`Linear → GELU → Linear`). Note `state_dim=7` matches Ch 2's hand-off observation shape — to be verified against Sid's actual export.
+2-layer MLP (`Linear → GELU → Linear`). `state_dim=6` is locked by Ch 2 Table 2.2 (`observation.state: (6,)`, verified pr-7).
 
-### `src/ch03/fusion_transformer.py` (listing 3.5)
+### `src/ch03/fusion_transformer.py` (optional separate-encoder exercise)
+
+> Off the main path. The shipped backbone fuses via unified-embedding splice; this module is kept only as the optional separate-encoder fusion exercise.
 
 ```python
 class FusionTransformer(nn.Module):
     def __init__(
         self,
-        hidden_dim: int = 512,
+        hidden_dim: int = 576,
         num_layers: int = 6,
         num_heads: int = 8,
         dropout: float = 0.1,
@@ -146,9 +159,9 @@ class FusionTransformer(nn.Module):
 
     def forward(
         self,
-        tokens: torch.Tensor,  # [B, N, 512]
+        tokens: torch.Tensor,  # [B, N, 576]
         key_padding_mask: torch.Tensor | None = None,
-    ) -> torch.Tensor:  # [B, N, 512]
+    ) -> torch.Tensor:  # [B, N, 576]
         ...
 ```
 
@@ -156,38 +169,37 @@ Causal self-attention via upper-triangular mask. Pre-norm.
 
 ### `src/ch03/vla_backbone.py` (listing 3.6)
 
+Fusion is a unified-embedding splice: image and state tokens are written into the language backbone's own input-embedding stream via `masked_scatter`, so the pretrained backbone is the fuser (no separate fusion module on the main path). The backbone grows its input embedding table by two inert placeholder rows for the image and state splice markers - this is NOT `resize_token_embeddings`; the tokenizer is untouched and `config.vocab_size` stays 49152.
+
 ```python
-class VLABackbone(nn.Module):
-    def __init__(
+class UnifiedEmbeddingBackbone(nn.Module):
+    def __init__(self) -> None: ...   # hidden width 576 (backbone native)
+
+    def build_input_ids(
         self,
-        hidden_dim: int = 512,
-        num_fusion_layers: int = 6,
-        num_fusion_heads: int = 8,
-    ) -> None: ...
+        text_ids: list[int],
+    ) -> list[int]:                  # image + text + state template
 
     def forward(
         self,
-        image: torch.Tensor,  # [B, 3, 224, 224]
-        instruction: list[str],
-        state: torch.Tensor,  # [B, state_dim]
-    ) -> torch.Tensor:  # [B, 196 + L + 1, 512]
+        images: torch.Tensor,        # [B, 2, 3, 224, 224] two cameras
+        input_ids: torch.Tensor,     # from build_input_ids
+        state: torch.Tensor,         # [B, state_dim]
+    ) -> torch.Tensor:               # [B, 392 + L + 1, 576]
         ...
 ```
 
 **Frozen export contract for Chapter 4.** Do not rename, do not change signature.
 
-### `src/ch03/viz_prompted_attention.py` (listing 3.7)
+### Listing 3.7 / figure 3.6 — `tracking_grid` (in `viz_similarity.py`)
 
-```python
-def prompted_attention_grid(
-    backbone: VLABackbone,
-    image: torch.Tensor,  # [3, 224, 224]
-    instructions: list[str],
-    save_path: str | None = None,
-) -> matplotlib.figure.Figure: ...
-```
-
-Three forward passes with different instructions; three attention rollout heatmaps; 1×3 panel grid.
+`tracking_grid` (signature above) runs patch self-similarity on the cube
+query in several frames where the cube spawns in different positions; the
+highlight tracks the object. Lineage: this replaced the v4 prompted-
+attention figure (could not reproduce on an untrained causal backbone),
+then the v5 object-attention rollout (blurry on a CLS-less encoder per
+the deep-research verdict). The "language doesn't steer vision yet" point
+stays in prose. No `output_attentions`/eager needed.
 
 ### `src/ch03/preprocess.py`
 
@@ -219,7 +231,7 @@ Within each section:
 | Role | Notebook cell contents |
 |---|---|
 | Type-along (3.1, 3.3, 3.4, 3.5, 3.6) | Full code from the book listing, inline |
-| Provided utility (3.2, 3.7) | `from ch03.viz_attention import ...` + a usage call |
+| Provided utility (3.2, 3.7) | `from ch03.viz_similarity import ...` + a usage call |
 
 ### Figure conventions
 
@@ -263,11 +275,11 @@ tests/
 
 | Module | Approach |
 |---|---|
-| `vision_encoder.py` | Assert all SigLIP params have `requires_grad=False`, output shape `[2, 196, 512]`, dtype `float32` |
+| `vision_encoder.py` | Assert all SigLIP params have `requires_grad=False`, output shape `[2, 196, 576]` per camera, dtype `float32` |
 | `language_backbone.py` | Assert vocab size == 49,152 (catches silent SmolLM revisions), tokenize+forward shape, projection trainable |
-| `state_encoder.py` | Shape `[B, state_dim] → [B, 1, 512]`, GELU nonlinearity present |
-| `fusion_transformer.py` | Causal mask is upper-triangular `-inf`, output shape == input shape, gradient flows |
-| `vla_backbone.py` | End-to-end forward on dummy batch returns `[B, 196+L+1, 512]`; integration-marked |
+| `state_encoder.py` | Shape `[B, state_dim] → [B, 1, 576]`, GELU nonlinearity present |
+| `fusion_transformer.py` | Causal mask is upper-triangular `-inf`, output shape == input shape, gradient flows (optional exercise module) |
+| `vla_backbone.py` | End-to-end forward on dummy batch returns `[B, 392+L+1, 576]`; integration-marked |
 
 ### Fixtures (`conftest.py`)
 
@@ -281,7 +293,7 @@ def dummy_instructions():
     return ["pick up the cube", "place it in the target"]
 
 @pytest.fixture
-def dummy_state(state_dim=7):
+def dummy_state(state_dim=6):
     return torch.rand(2, state_dim)
 ```
 
@@ -332,7 +344,7 @@ dev = [
 ```
 
 Pins:
-- **`transformers>=4.45`** — vocab expansion APIs stable in 4.45+; SigLIP-base+SmolLM-135M both supported
+- **`transformers>=4.45`** — vocab expansion APIs stable in 4.45+; SigLIP-base+SmolLM2-135M both supported
 - **`lerobot==0.5.1`** — matches Ch 2 hand-off contract
 - **`torch>=2.1`** — matches Ch 2
 
@@ -352,7 +364,7 @@ The agent loads files lazily via `Read` rather than stuffing them into the syste
 
 ## Open Questions
 
-1. **`state_dim` is 7 (Ch 2 ships 7-dim observation.state) or 6?** Verify against Sid's final `make_pickplace_dataloader` output before PR 4 lands. Likely 7 based on Ch 2 plan; `StateEncoder` defaults to 7 here.
-2. **`preprocess.py` scope** — if Ch 2 already ships `[3, 224, 224]` float in `[0,1]`, this module shrinks to a comment + passthrough.
+1. **`state_dim`** — RESOLVED: 6 (Ch 2 Table 2.2, `observation.state: (6,)`, verified pr-7). `StateEncoder` defaults to `state_dim=6`.
+2. **`preprocess.py` scope** — RESOLVED: Ch 2 ships `[3, 480, 640]` float in `[0,1]` (Table 2.2), so `preprocess_image` resizes to `[3, 224, 224]`. SigLIP's `[-1,1]` normalization lives inside `VisionEncoder`.
 3. **Notebook integration with Ch 2's dataloader** — confirm import path (`from ch02 import make_pickplace_dataloader`) works locally once Sid's PRs 4-6 land.
 4. **CI integration suite** — wait for Vulkan setup in GHA or skip integration tests in CI like Sid does.

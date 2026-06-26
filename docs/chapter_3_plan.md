@@ -1,10 +1,14 @@
 # Chapter 3: Building the VLA Backbone — Structure & Content Plan (v3)
 
+> **Superseded by v5 (shipped code)**: the prose below is a historical plan snapshot. The shipped backbone is `UnifiedEmbeddingBackbone` (not `VLABackbone`), uses `SmolLM2-135M`, hidden width **576** (the backbone's native width, no 512 down-projection), **two cameras** (`up` + `side`) for **392** image tokens, and fuses by splicing image and state tokens into the language backbone's own stream via `masked_scatter` (the pretrained backbone is the fuser; there is no separate fusion transformer on the main path - `fusion_transformer.py` is only the optional separate-encoder exercise). Output contract: `[B, 392 + L + 1, 576]`. Load-bearing facts are corrected inline below; where a section is clearly a historical snapshot, treat the v5 facts here as authoritative.
+
 **Author**: Krishnam Gupta
 **Code repo**: `Large-Robotics-Models-From-Scratch/lrm-code-chapter-3`
 **Built on**: chapter 2 (`from ch02 import make_pickplace_dataloader, normalize, denormalize`; dataset = `lerobot/svla_so101_pickplace`; sim env = `PickCubeSO100-v1`)
 **Hands off to**: chapter 4 (action head + action tokenization + vocab expansion all happen there)
-**Last updated**: 2026-05-27 (v4 — aligned with Ch 2 verified facts: state_dim=6, camera keys `up`/`side`, dataset `svla_so101_pickplace`, image (3, 480, 640), SO-100 sim + SO-101 dataset framing)
+**Last updated**: 2026-06-15 (v6 — frozen-vision visualization switched from attention rollout to **patch self-similarity**, after a co-author flagged rollout looked blurry and a deep-research pass confirmed it. Verdict: on a CLS-less contrastive encoder rollout has no CLS row and deep-layer token mixing breaks it; self-similarity (cosine sim of a query patch to all patches, on raw 768-dim SigLIP features) is crisper, more honest, less code, and transfers to the DINOv2 exercise. Code simplified — no `output_attentions`/eager; encoder always returns `[B,196,512]`. Figures 3.3/3.6 are self-sim grids (`viz_similarity.py`). Rollout demoted to a one-line mention. Exercise 3.1 now re-runs self-sim on DINOv2 + introduces PCA-to-RGB (DINOv2's canonical viz); new Exercise 3.4 = patch-to-text grounding with the MaskCLIP value-readout fix. Research report: deep-research wf_90df93b8-73d.)
+**v5**: 2026-06-11 (object-tracking replaced prompted-attention; facts verified; +3 exercises; tokenization callout; SmolLM trainable / SigLIP frozen)
+**Previously**: 2026-05-27 (v4 — aligned with Ch 2 verified facts: state_dim=6, camera keys `up`/`side`, dataset `svla_so101_pickplace`, image (3, 480, 640), SO-100 sim + SO-101 dataset framing)
 
 ## Archetype
 
@@ -146,7 +150,7 @@ Three stories woven together:
 
 **Figures**:
 - 3.2: Image → patch grid → token sequence (process diagram)
-- 3.3: SigLIP attention overlay on three SO-100 frames (cube highlighted, gripper highlighted, table suppressed) — caption notes left, center, right by position not color
+- 3.3: Patch self-similarity grid. One SO-100 frame; query a cube patch and an arm patch; each lights up its object (cube query -> cube, arm query -> arm). Shows the frozen encoder groups object regions with no training. Caption marks the query patches by position, not color.
 
 **Honesty aside** (in 3.2.1): "From scratch" does not mean we re-derive ImageNet. We download SigLIP's weights and inherit ~400M images of pretraining. What we build from scratch is the wiring around it — how patches flow into our fusion transformer, how attention is masked, how the projection to our common width works.
 
@@ -163,15 +167,15 @@ Three stories woven together:
 
 **Subsections**:
 - 3.3.1 Why a language model, not just a text encoder (½ page) — causal generation as the goal
-- 3.3.2 SmolLM-135M in 2 paragraphs (inline, no separate concept box)
+- 3.3.2 SmolLM2-135M in 2 paragraphs (inline, no separate concept box)
 - 3.3.3 Tokenize the instruction (½ page) — use SmolLM's native tokenizer, no modifications
-- 3.3.4 Forward pass + projection to 512 (1-2 pages, includes listing 3.3 + figure 3.4)
+- 3.3.4 Forward pass at native 576 (1-2 pages, includes listing 3.3 + figure 3.4)
 
 **Concept boxes** (0 in this section — all tokenization theory moves to ch 4):
 - (none — keep section lean)
 
 **Listings**:
-- 3.3: Loading SmolLM, tokenizing an instruction, forward pass, project 576 → 512 (~50 lines)
+- 3.3: Loading SmolLM2, tokenizing an instruction, forward pass at native 576 (~50 lines)
 
 **Figures**:
 - 3.4: Token flow through SmolLM. Show "pick up the red cube" → BPE token IDs → SmolLM hidden states → projection to 512-dim. No reserved-slot annotations — ch 4 will add that diagram when it expands the vocab.
@@ -216,11 +220,11 @@ Three stories woven together:
 
 **Figures**:
 - 3.5: Multimodal token layout in fusion transformer. Show 196 image positions, L language positions, 1 state position. Indicate causal attention as left-to-right arrows. Caption labels positions by index range, not color. (No dashed action positions in this figure — ch 4 will introduce them.)
-- 3.6: Prompted attention grid. Same SO-100 scene, three different instructions ("pick the red cube", "pick the blue cube", "show the gripper") → three different attention heatmaps. Demonstrates the backbone routes attention to instruction-relevant patches without any training.
+- 3.6: Object-tracking self-similarity grid. Three SO-100 frames where the cube spawns in different positions; query the cube patch in each (the cube moves, so the query moves), and the highlight follows the cube. Shows the frozen encoder localizes the object wherever it spawns — the reason we can freeze it. (v6: now patch self-similarity, not rollout. The "language doesn't steer vision yet" point is a one-line prose caveat, not a figure.)
 
 ### Hidden dim justification (in 3.4.1 or 3.2.5)
 
-> Why 512? SigLIP outputs 768-dim hidden states; SmolLM-135M outputs 576-dim. We want one common width so all streams can sit in the same sequence and be processed by one transformer. 512 is a round power of two slightly below both natives — every stream projects down (cheap linear layers, no information bottleneck for our scale), and we pick a multiple of 64 so 8 attention heads × 64-dim each works cleanly. Larger production VLAs use 768, 1024, or higher. We pick 512 because it fits T4 memory comfortably with our sequence length (~210 tokens).
+> Why 576? SigLIP outputs 768-dim hidden states; SmolLM2-135M's native width is 576-dim. We want one common width so all streams can sit in the same sequence and be processed by the language backbone. We use the backbone's own 576-dim width: SigLIP and the state encoder each project into 576 (cheap linear layers), and the image/state tokens are spliced straight into the backbone's input-embedding stream. Using the backbone's native width means no down-projection bottleneck and the pretrained backbone does the fusing. Larger production VLAs use 768, 1024, or higher.
 
 ### Beefed-up causal mask explanation (3.4.3)
 
@@ -228,23 +232,34 @@ Three stories woven together:
 >
 > **Preview of Ch 4** (one paragraph, no code yet): the action head will append 6 action token positions to the right end of the sequence. With causal masking, position `[image+lang+state+0]` predicts the first action token using image+language+state context. Position `[image+lang+state+1]` predicts the second using everything before plus the first action token. And so on, six positions, six joint commands. The model trains via standard cross-entropy loss on the predicted action token IDs.
 
-### Prompted attention visualization (3.4.5) — replaces VQA training
+### Object-tracking visualization (3.4.5) — patch self-similarity across frames
 
-> We've built a `VLABackbone`, but we haven't trained anything yet beyond the projection layers' default initialization. Does the backbone actually attend to instruction-relevant regions of the scene? We can answer that with a single forward pass and an attention rollout — no training, no labels, no VQA dataset.
+> We've built a `VLABackbone`. Before attaching an action head, it's worth seeing what the frozen vision encoder already does for us. Take three frames where the cube spawns in different positions, query the cube's patch in each, and measure its self-similarity to every other patch. The highlight follows the cube every time. With no training on our part, SigLIP already localizes the object wherever it spawns — that training-free spatial grounding is exactly why we can freeze the vision encoder and build the policy on top of it.
 >
-> The recipe: take one SO-100 frame from `svla_so101_pickplace`. Pass it through the backbone three times with three different instructions: "pick the red cube", "pick the blue cube", "show the gripper". For each pass, run attention rollout on the SigLIP layers (chapter 3.2.4 already wrote this) and overlay the heatmap on the original frame.
->
-> If the backbone is doing its job, the three heatmaps should differ: "red cube" lights up red-cube patches, "blue cube" lights up blue-cube patches, "gripper" lights up the gripper. If they're identical, the language conditioning isn't reaching the vision features — and we have a bug to fix before chapter 4.
->
-> Honest framing: this isn't training, it's a **diagnostic**. We're inspecting what the frozen pre-trained components already do when wired together. Production VLAs skip this step because they trust their components. Chapter 3 readers don't yet — and one figure of comparative heatmaps builds that trust cheaply.
->
-> If the team wants a richer probe later (a real VQA training stage), chapter 6 has a natural slot for it during multi-task curriculum work. For chapter 3, the visualization is enough.
+> One honest caveat, in a sentence: the *instruction* does not yet steer where the model looks. The vision encoder never reads the language. Wiring language in is what chapter 4's end-to-end training does. We don't draw a figure of that non-effect; we name it and move on.
 
-### Why this replaces VQA pretraining (decision rationale)
+### Why patch self-similarity (decision rationale, v6 — research-backed)
 
-The v2 plan included a full VQA training loop (~80 LOC) and 2-3 pages of treatment. Team feedback (2026-05-18) flagged that this was scope creep — readers expect chapter 3 to *build* the backbone, not *train* it. The lighter visualization keeps the validation story (does the backbone work?) without adding a training pipeline that chapters 4-6 will subsume anyway. Net savings: ~50 LOC and ~2 pages.
+Lineage: v4 used a prompted-attention figure (could not reproduce on an untrained backbone); v5 switched to object-tracking via **attention rollout**; a co-author then showed rollout looked blurry on SigLIP, and a deep-research pass (wf_90df93b8-73d, 23/25 claims verified 3-0) confirmed why: rollout was designed to read off a **class token**, which SigLIP has none of, and after a dozen layers of token mixing the attention weights no longer point back to input patches. Patch **self-similarity** reads the frozen 768-dim patch features directly — the most honest view of what the encoder represents, the least code, and it transfers unchanged to the DINOv2 exercise. Rollout drops to a one-line mention with the correct rationale (NOT the refuted "identity/residual smoothing" story). See `resources/deviations.md` D1.
 
-**Intuition signpost** (close section): "You have a VLA backbone. It takes an image, a sentence, and six numbers, and produces a sequence of contextualized hidden states. Pass the same image with different instructions and you see different patches light up — the conditioning works. Chapter 4 attaches an action head to the right end of this output."
+**Intuition signpost** (close section): "You have a VLA backbone. It takes an image, a sentence, and six numbers, and produces a sequence of contextualized hidden states. The frozen vision encoder already finds the cube wherever it sits. Chapter 4 attaches an action head to the right end of this output and teaches the instruction to steer it."
+
+### Optional exercises (3.x) — Manning-style, parity with chapter 2
+
+Chapter 2 ships four "Optional Exercise" boxes; chapter 3 includes 2-3:
+
+- **Exercise 3.1 — Swap SigLIP for DINOv2.** Load `facebook/dinov2-base` in place of SigLIP and re-run the same patch self-similarity. DINOv2 is self-supervised and its dense features are crisper (it has no language alignment, which is why the book uses SigLIP). Then try DINOv2's signature visualization: a PCA of the patch features rendered as RGB, with first-PC thresholding for a foreground mask (Oquab et al. 2023). Honest note for the prose: single-image PCA separates foreground from background, not one object from another.
+- **Exercise 3.2 — Add the wrist camera.** The Ch 2 batch also carries `observation.images.side`. Encode it as a second image stream and watch the fused sequence grow to `196 + 196 + L + 1`. Previews the multi-camera fusion chapter 6 builds.
+- **Exercise 3.3 — Inspect BPE.** Tokenize five instructions with SmolLM's tokenizer and print how each splits into subword IDs. Connects to the tokenization callout in 3.2.3.
+- **Exercise 3.4 — Ground a word to patches (on-thesis).** SigLIP is image-*text* aligned, so you can compute cosine similarity between each patch and the text embedding of "red cube" from SigLIP's text tower. Observe it is noisy and poorly localized: contrastive pre-training trains a single global pooled embedding, not dense patch-text correspondence (vanilla CLIP scores only ~3-6% mIoU at 224/14x14). Then apply the training-free MaskCLIP fix (drop the pool head's query/key projections and read each location's value feature) and watch it sharpen (Zhou et al. 2022, MaskCLIP). This is the clearest demonstration of the vision-language grounding that motivates choosing SigLIP for a VLA.
+
+### Tokenization callout (concept box, 3.2.3) — "everything is tokens"
+
+Place right after "your image as a sentence of patches." Routes through the three modalities the book builds, tied to chapter 1's "motion as a modality," with one clause nodding to the broader LRM family. Do NOT illustrate audio (the book doesn't build it, and audio tokenization genuinely differs from image patching — overclaiming risk).
+
+> **Tokenization is universal.** You just turned an image into patch tokens. Text is already tokens (SmolLM's BPE). And in chapter 4, a motor command becomes an action token. One Transformer processes all three because it never knows or cares which modality a token came from — exactly the "motion as a modality" idea from chapter 1. The same trick extends to audio, LIDAR, and other sensors across the broader family of large robotics models, though each modality tokenizes differently.
+
+(If a figure is wanted, show the three modalities the book builds — image patches + text tokens + action tokens → one Transformer — not an audio waveform.)
 
 **Reader state at end**: Has a complete `VLABackbone` class. Has visual evidence (a 3-panel attention grid) that language conditioning shapes which image patches the backbone attends to. Understands the token layout. Knows why causal masking matters for ch 4. Ready to attach an action head.
 
@@ -276,7 +291,7 @@ The v2 plan included a full VQA training loop (~80 LOC) and 2-3 pages of treatme
 
 | Model | Backbone size | Vision | Language | Notes |
 |---|---|---|---|---|
-| Yours (after this chapter) | ~0.5B | SigLIP-base (frozen) | SmolLM-135M | First-principles build |
+| Yours (after this chapter) | ~0.5B | SigLIP-base (frozen) | SmolLM2-135M | First-principles build |
 | OpenVLA | 7B | DINOv2 + SigLIP | Llama-2-7B | Fine-tuned, OXE-trained |
 | RT-2-X | 55B | PaLI-X vision | PaLM-X | Largest, Google internal |
 | π0 | 3B | SigLIP-large | PaliGemma | Fine-tuned for flow matching |
@@ -290,16 +305,16 @@ Same anatomy. You scaled differently.
 
 | Decision | Choice | Why |
 |---|---|---|
-| Vision encoder | SigLIP-base/16 (224) | Image-text aligned, 196 patch tokens |
-| Camera input | `observation.images.up` only (top-down camera) | Single stream for chapter 3; `observation.images.side` (wrist) added in chapter 6 |
+| Vision encoder | SigLIP-base/16 (224) | Image-text aligned, 196 patch tokens per camera |
+| Camera input | both `observation.images.up` and `observation.images.side` (two cameras) | 392 image tokens = 2 x 196 |
 | Image preprocessing | Resize 480×640 → 224×224 (Ch 2 ships native dataset resolution; Ch 3 resizes for SigLIP) | Match SigLIP input size |
-| Language backbone | SmolLM-135M | Small, OSS, runs on T4, good tokenizer |
+| Language backbone | SmolLM2-135M | Small, OSS, runs on T4, good tokenizer |
 | Tokenizer changes in ch 3 | **None** — native SmolLM tokenizer | Vocab expansion moved to ch 4 |
-| Fusion mechanism | Concat + causal self-attention (RT-2 style; Brohan et al. 2023) | Simpler "from scratch" build, matches OpenVLA |
-| Hidden dim | 512 | Bridges SigLIP 768 + SmolLM 576; multiple of 64 for clean head dim |
-| Attention heads | 8 (64-dim per head) | Standard ratio for d=512 |
-| Fusion transformer layers | 6 | Fits T4; chapter 6 explores scaling |
-| Dropout | 0.1 in fusion transformer | Standard transformer regularization |
+| Fusion mechanism | Unified embedding: image and state tokens spliced into the backbone's stream via `masked_scatter` (the pretrained backbone fuses) | No separate fusion module on the main path; `fusion_transformer.py` is the optional separate-encoder exercise |
+| Hidden dim | 576 | The language backbone's native width; all streams project to 576 |
+| Attention heads | (backbone native) | Provided by the pretrained SmolLM2-135M backbone |
+| Fusion transformer layers | n/a on main path | Backbone is the fuser; the 6-layer fusion transformer is the optional exercise only |
+| Dropout | n/a on main path | The separate-encoder exercise uses 0.1 |
 | State dim | **6** (5 SO-101 joint positions + gripper position; verified per Ch 2 Table 2.2) | SO-100/101 native; matches dataset |
 | Action dim (consumed by Ch 4) | 6 (matches dataset action format) | Ch 4 owns the action head |
 | Sim env framing | `PickCubeSO100-v1` (ManiSkill3 ships SO-100 in sim) | SO-100 sim + SO-101 dataset + SO-101 hardware all share 6-DOF interface (per Ch 2 callout) |
@@ -314,15 +329,16 @@ Same anatomy. You scaled differently.
 ## Hand-off contract to chapter 4
 
 ```python
-from ch03 import VLABackbone
+from ch03 import UnifiedEmbeddingBackbone
 
-backbone = VLABackbone(hidden_dim=512)
-hidden = backbone(image, instruction, state)
-# image:       [B, 3, 224, 224]   resized from Ch 2's (3, 480, 640) by ch03.preprocess
-# instruction: list[str]          batch of B instructions (`batch["task"]` from ch02 loader)
-# state:       [B, 6]             SO-101 joint positions (z-scored by ch02 collate)
-# hidden:      [B, 196 + L + 1, 512]
-# tokenizer:   native SmolLM (49,152 vocab) — no expansion in ch 3
+backbone = UnifiedEmbeddingBackbone()
+input_ids = backbone.build_input_ids(text_ids)
+hidden = backbone(images, input_ids, state)
+# images:    [B, 2, 3, 224, 224]  two cameras, resized from Ch 2's (3, 480, 640) by ch03.preprocess
+# input_ids: list[int]            image + text + state template from build_input_ids
+# state:     [B, 6]               SO-101 joint positions (z-scored by ch02 collate)
+# hidden:    [B, 392 + L + 1, 576]
+# tokenizer: native SmolLM (49,152 vocab) — no expansion in ch 3
 ```
 
 Ch 3 imports from Ch 2 via:
@@ -396,12 +412,13 @@ Total reader-facing code: ~270 LOC + tests ~120 LOC.
 | BPE tokenization | Sennrich et al. 2016 (arxiv 1508.07909) |
 | DINOv2 (briefly mentioned) | Oquab et al. 2023 (arxiv 2304.07193) |
 
-## Facts to verify
+## Facts to verify — VERIFIED 2026-06-11 (live model load + tests)
 
-- SmolLM-135M hidden dim (576 assumed; verify in HF model card)
-- SmolLM-135M vocab size (49,152 assumed; verify)
-- SigLIP-base/16 specifically (vs /14) at 224 input size
-- SigLIP-base parameter count (~86M assumed; verify)
+- SmolLM2-135M hidden dim = **576** ✓ (confirmed loading the model; this native 576 is the common width)
+- SmolLM2-135M vocab size = **49,152** ✓ (asserted in `test_language_backbone`)
+- SigLIP-base/16 at 224 input = **196 patch tokens, 768-dim, no CLS token** ✓
+- SigLIP needs `attn_implementation="eager"` to expose attention maps ✓ (SDPA hides them; we default to SDPA and use eager only for the rollout figure)
+- SigLIP-base ≈ 86M params (unchanged; not load-bearing)
 
 ## Open questions for team
 

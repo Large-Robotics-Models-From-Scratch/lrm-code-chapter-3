@@ -4,18 +4,18 @@ You are working on **Chapter 3** of "Build a Large Robot Model (From Scratch)" (
 
 ## Chapter scope
 
-This repo contains the code for **the VLA backbone**: a frozen SigLIP vision encoder + SmolLM-135M language backbone + state encoder + multimodal fusion transformer. Output: contextualized hidden states ready for an action head (Chapter 4 adds it).
+This repo contains the code for **the VLA backbone**: a frozen SigLIP vision encoder + SmolLM2-135M language backbone + state encoder, fused by unified embedding. The two camera views are projected and spliced into the language backbone's own token stream, so the pretrained backbone is the fuser - there is no separate fusion transformer on the main path. Output: contextualized hidden states ready for an action head (Chapter 4 adds it).
 
 ## Locked architectural decisions (Ch 3 plan v3)
 
 | Component | Choice | Source of truth |
 |---|---|---|
 | Vision encoder | SigLIP-base/16 (frozen) | `src/ch03/vision_encoder.py` |
-| Language backbone | SmolLM-135M (**native tokenizer; no vocab expansion**) | `src/ch03/language_backbone.py` |
-| Fusion | Concat + causal self-attention, 6 layers, 8 heads, dropout 0.1 | `src/ch03/fusion_transformer.py` |
-| Hidden dim | 512 | All projections target 512 |
-| Robot | SO-100 (6-DOF arm + 1 gripper) | Ch 2 hand-off |
-| Camera input | `observation.images.up` only | Wrist camera added in Chapter 6 |
+| Language backbone | SmolLM2-135M (**native tokenizer; no vocab expansion**) | `src/ch03/language_backbone.py` |
+| Fusion | Unified-embedding fusion: image tokens spliced into the language backbone's stream via `masked_scatter`; the pretrained backbone fuses (no separate fusion module on the main path) | `src/ch03/vla_backbone.py` (source of truth); `fusion_transformer.py` kept only as the optional "separate-encoder fusion" exercise |
+| Hidden dim | 576 | The language backbone's native width; all projections target 576 |
+| Robot | SO-100 sim env (PickCubeSO100-v1); SO-101 teleop dataset (6-DOF: 5 arm + gripper) | Ch 2 hand-off |
+| Camera input | both `observation.images.up` and `observation.images.side` (two cameras, 392 image tokens = 2 x 196) | Ch 2 hand-off |
 | State dim | **6** (5 SO-101 joint positions + gripper position; verified per Ch 2 pr-7 Table 2.2) | `src/ch03/state_encoder.py` |
 | Action dim (consumed by Ch 4) | 6 (matches dataset action format) | Ch 4 owns |
 
@@ -24,20 +24,24 @@ This repo contains the code for **the VLA backbone**: a frozen SigLIP vision enc
 - Action token reservation (256 bins × 6 dims = 1,536 IDs)
 - Action head + autoregressive prediction loop
 
+> Note: the backbone grows its input embedding table by two inert placeholder rows for the image and state splice markers. This is **not** vocabulary expansion - the rows are overwritten by `masked_scatter` before the backbone runs, the tokenizer is untouched, and `config.vocab_size` stays 49152.
+
 ## Hand-off contracts
 
 **From Chapter 2** (`from ch02 import make_pickplace_dataloader, normalize, denormalize`):
-- Batches with `observation.state: (B, 7) float32` z-scored
-- `observation.images.top: (B, 3, 224, 224) float32` in `[0, 1]`
-- `observation.images.wrist: (B, 3, 224, 224) float32` (available; we use `top` only in Ch 3)
+- Batches with `observation.state: (B, 6) float32` z-scored (5 arm joints + gripper)
+- `observation.images.up: (B, 3, 480, 640) float32` in `[0, 1]` (Ch 3 resizes to 224x224)
+- `observation.images.side: (B, 3, 480, 640) float32` in `[0, 1]` (Ch 3 now consumes BOTH cameras - up and side - each resized to 224x224)
 - `action: (B, 6) float32` z-scored — Ch 3 doesn't predict actions, just hands hidden states to Ch 4
+- `task: list[str]` — the instruction, fed to the language backbone
 
 **To Chapter 4**:
 ```python
-from ch03 import VLABackbone
-backbone = VLABackbone(hidden_dim=512)
-hidden = backbone(image, instruction, state)
-# hidden: [B, 196 + L + 1, 512]
+from ch03 import UnifiedEmbeddingBackbone
+backbone = UnifiedEmbeddingBackbone()
+input_ids = backbone.build_input_ids(text_ids)
+hidden = backbone(images, input_ids, state)  # images: [B, 2, 3, 224, 224]
+# hidden: [B, 392 + L + 1, 576]
 ```
 
 ## Code-style agents
@@ -58,7 +62,7 @@ Symlinked into `.claude/agents/` via the setup in `program.md` §2. See `../lrm-
 
 ## When editing code
 
-- Locked component names: `vision_encoder`, `language_backbone`, `action_head`, `fusion_transformer` — never abbreviate or rename
+- Locked component names: `vision_encoder`, `language_backbone`, `action_head`, `fusion_transformer` - never abbreviate or rename. Note: `fusion_transformer` is a valid name but only for the optional separate-encoder fusion exercise; the main fusion is the unified-embedding splice in `vla_backbone.py`
 - Banned: JAX, TensorFlow imports
 - Line length: 76 chars (55 for annotated lines)
 - Python 3.12, indent 4 spaces

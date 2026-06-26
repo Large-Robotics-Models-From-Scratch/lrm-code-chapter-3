@@ -66,12 +66,12 @@ For each of the 7 listings in `docs/chapter_3_plan.md`, in order:
    | Listings | Module | Reader role |
    |---|---|---|
    | 3.1 | `src/ch03/vision_encoder.py` (SigLIP load + freeze + project) | type-along |
-   | 3.2 | `src/ch03/viz_attention.py` (attention rollout) | provided utility |
-   | 3.3 | `src/ch03/language_backbone.py` (SmolLM, no vocab expansion) | type-along |
-   | 3.4 | `src/ch03/state_encoder.py` (6-dim → 512 MLP) | type-along |
-   | 3.5 | `src/ch03/fusion_transformer.py` (concat + causal self-attention) | type-along |
-   | 3.6 | `src/ch03/vla_backbone.py` (compose the above) | type-along |
-   | 3.7 | `src/ch03/viz_prompted_attention.py` (3-prompt attention grid) | provided utility |
+   | 3.2 | `src/ch03/viz_similarity.py` (patch self-similarity) | provided utility |
+   | 3.3 | `src/ch03/language_backbone.py` (SmolLM2, no vocab expansion) | type-along |
+   | 3.4 | `src/ch03/state_encoder.py` (6-dim -> 576 MLP) | type-along |
+   | 3.5 | `src/ch03/vla_backbone.py` (compose the three streams + `build_input_ids`) | type-along |
+   | 3.6 | `src/ch03/vla_backbone.py` (`forward`: masked_scatter splice into the backbone's stream) | type-along |
+   | 3.7 | `tests/` (definition-of-done verification: shapes, splice, no vocab change) | verification |
 
 3. **Mirror in the notebook**.
 4. **Write the code** matching the plan exactly: same variable names, same annotations, same line ordering.
@@ -85,12 +85,13 @@ For each of the 7 listings in `docs/chapter_3_plan.md`, in order:
 
 ## 4. The Export Contract
 
-`VLABackbone.forward(image, instruction, state) → [B, 196+L+1, 512]` is the **frozen interface** between Ch 3 and Ch 4. Signature specified in `docs/chapter_3_plan.md` "Hand-off contract to chapter 4" and in `ARCHITECTURE_LOG.md`.
+`UnifiedEmbeddingBackbone.forward(images, input_ids, state) -> [B, 392 + L + 1, 576]` is the **frozen interface** between Ch 3 and Ch 4. Signature specified in `docs/chapter_3_plan.md` "Hand-off contract to chapter 4" and in `ARCHITECTURE_LOG.md`.
 
 **Implications:**
-- Do not rename `VLABackbone` or change the forward signature.
-- The output tensor shape is part of the contract — Ch 4 reads the rightmost K positions.
-- The tokenizer is SmolLM's native (49,152 vocab) — vocab expansion belongs to Ch 4.
+- Do not rename `UnifiedEmbeddingBackbone` or change the forward signature.
+- `images` is `[B, 2, 3, 224, 224]` (two cameras); `input_ids` comes from `build_input_ids(text_ids)` (image + text + state order); `state` is `[B, 6]`.
+- The output tensor shape is part of the contract - Ch 4 reads the rightmost K positions.
+- The tokenizer is SmolLM2's native (49,152 vocab) - vocab expansion belongs to Ch 4. The backbone grows its input embeddings by two inert splice-marker rows, which leaves `config.vocab_size` at 49,152.
 - Reverse-check enforced via `chapter-continuity` agent: no `add_tokens` or `resize_token_embeddings` in Ch 3 code.
 
 When implementation reveals a problem with this interface, update the plan in `docs/chapter_3_plan.md` *and* `../lrm-book/chapter_3/chapter_3_structure_and_plan.md` *together*, in the same commit.
@@ -101,7 +102,7 @@ Run `chapter-continuity` after any change to the export surface.
 
 ## 5. Figures
 
-The chapter plan lists 6 figures (3.1-3.6). Figure 3.1 is the book-wide roadmap recap with the Chapter 3 stage highlighted — reuse the figure-1.7 source rather than re-rendering. The other five are produced inside `notebooks/ch03.ipynb` using helper functions in `src/ch03/viz_attention.py` and `src/ch03/viz_prompted_attention.py`, exported to `figures/` for the chapter draft.
+The chapter plan lists 6 figures (3.1-3.6). Figure 3.1 is the book-wide roadmap recap with the Chapter 3 stage highlighted — reuse the figure-1.7 source rather than re-rendering. The other five are produced inside `notebooks/ch03.ipynb` using helper functions in `src/ch03/viz_similarity.py`, exported to `figures/` for the chapter draft.
 
 For each figure:
 - The plotting helper lives in `src/ch03/` so it is importable and testable
@@ -141,7 +142,7 @@ The chapter is done when:
 
 - **One listing at a time.** Don't write three files in parallel.
 - **Update the plan when reality diverges.** Code-first, plan-after creates silent drift.
-- **Cross-reference the export contract before any rename.** Ch 4's plan locks `VLABackbone` symbol.
+- **Cross-reference the export contract before any rename.** Ch 4's plan locks the `UnifiedEmbeddingBackbone` symbol.
 - **Don't pre-emptively optimize.** Chapter 3 is the simplest backbone that works on a laptop.
 - **Notebook is not a dumping ground.** Anything more than ~10 lines belongs in `src/ch03/`.
 - **Clear notebook outputs before committing** (pre-commit hook does this via nbstripout).
