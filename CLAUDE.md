@@ -39,10 +39,19 @@ This repo contains the code for **the VLA backbone**: a frozen SigLIP vision enc
 ```python
 from ch03 import UnifiedEmbeddingBackbone
 backbone = UnifiedEmbeddingBackbone()
-input_ids = backbone.build_input_ids(text_ids)
-hidden = backbone(images, input_ids, state)  # images: [B, 2, 3, 224, 224]
-# hidden: [B, 392 + L + 1, 576]
+text_ids = backbone.tokenize_instruction(instruction)  # L native SmolLM2 ids
+sequence_ids = backbone.build_sequence_ids(text_ids)
+hidden = backbone(images, sequence_ids, state)  # images: [B, 2, 3, 224, 224]
+# hidden: [B, N, 576]  where N = 392 + L + 1
 ```
+
+> **Cross-chapter API change (this PR):** the fused-layout builder is
+> `build_sequence_ids` and the `forward` argument is `sequence_ids` (was
+> `build_input_ids` / `input_ids`). This renames only OUR fused layout;
+> Hugging Face's `input_ids` (tokenizer/model API) is untouched. The
+> fused sequence length is `N = 392 + L + 1`. **Chapter 4's repo must
+> adopt `build_sequence_ids` / `sequence_ids`** in the hand-off call
+> above; Vatsal owns Ch 4 and needs to sync this contract.
 
 ## Code-style agents
 

@@ -64,14 +64,20 @@ The rows below predate this update and describe the superseded v3 design; retain
 from ch03 import UnifiedEmbeddingBackbone
 
 backbone = UnifiedEmbeddingBackbone()
-input_ids = backbone.build_input_ids(text_ids)
-hidden = backbone(images, input_ids, state)
-# images:    [B, 2, 3, 224, 224]  two cameras (up, side), preprocessed ([0,1] from Ch 2)
-# input_ids: [B, 392 + L + 1]     template: 392 image + L text + 1 state placeholder
-# state:     [B, 6]               SO-101 state (5 joint positions + gripper), per Ch 2 pr-7 Table 2.2
-# hidden:    [B, 392 + L + 1, 576] the contract Ch 4 reads
-# tokenizer: native SmolLM2 (49,152 vocab), no expansion in Ch 3
+text_ids = backbone.tokenize_instruction(instruction)
+sequence_ids = backbone.build_sequence_ids(text_ids)
+hidden = backbone(images, sequence_ids, state)
+# images:       [B, 2, 3, 224, 224]  two cameras (up, side), preprocessed ([0,1] from Ch 2)
+# sequence_ids: [B, N]               template: 392 image + L text + 1 state placeholder (N = 392 + L + 1)
+# state:        [B, 6]               SO-101 state (5 joint positions + gripper), per Ch 2 pr-7 Table 2.2
+# hidden:       [B, N, 576]          the contract Ch 4 reads
+# tokenizer:    native SmolLM2 (49,152 vocab), no expansion in Ch 3
 ```
+
+> **Naming (this PR):** OUR fused-layout builder is `build_sequence_ids`
+> and the `forward` argument is `sequence_ids`. HF's `input_ids`
+> (tokenizer/model API) stays as-is. `N = 392 + L + 1` is the fused
+> sequence length. Chapter 4's repo must adopt these names.
 
 Chapter 4's first step: expand the vocab with 1,536 action token IDs (256 bins × 6 dims) and call `model.resize_token_embeddings(50688)`. Then Ch 4's action head appends action token positions to the rightmost end of the sequence and trains autoregressive prediction over them.
 

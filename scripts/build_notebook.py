@@ -189,10 +189,13 @@ validly. Those rows are overwritten by the splice before the backbone
 runs, so this is not Chapter 4's vocabulary expansion: the tokenizer is
 untouched and ``config.vocab_size`` stays 49,152.
 
-``build_input_ids`` templates one row in the order
+``build_sequence_ids`` templates one row in the order
 ``[image (392), text (L), state (1)]``: 392 image placeholder ids (196
 for camera 0, then 196 for camera 1), the tokenized text, then one state
-placeholder id. (Full source: ``src/ch03/vla_backbone.py``.)
+placeholder id. ``tokenize_instruction`` returns the L native SmolLM2
+text ids; note HF hands those back under the key ``input_ids``, and we
+assemble them into OUR ``sequence_ids``. (Full source:
+``src/ch03/vla_backbone.py``.)
 """)
 
 code("""
@@ -200,10 +203,10 @@ from ch03 import UnifiedEmbeddingBackbone
 
 backbone = UnifiedEmbeddingBackbone().eval()
 
-text_ids = language_backbone.tokenizer(instruction)["input_ids"]
-input_ids = backbone.build_input_ids(text_ids)
+text_ids = backbone.tokenize_instruction(instruction)
+sequence_ids = backbone.build_sequence_ids(text_ids)
 L = len(text_ids)
-print("template length:", len(input_ids), "= 392 +", L, "+ 1")
+print("template length:", len(sequence_ids), "= 392 +", L, "+ 1")
 print("vocab size unchanged:",
       backbone.language_backbone.config.vocab_size)   # 49152
 """)
@@ -211,7 +214,7 @@ print("vocab size unchanged:",
 md("""
 ### Listing 3.6 The forward pass: the masked_scatter splice
 
-``forward(images, input_ids, state)`` encodes the two camera views,
+``forward(images, sequence_ids, state)`` encodes the two camera views,
 projects them to 576, looks up the template's embeddings, and uses
 ``masked_scatter`` to drop the 392 image tokens and the 1 state token
 into their reserved placeholder slots. The pretrained SmolLM2 attention
@@ -222,7 +225,7 @@ is the contract Chapter 4 attaches an action head to.
 code("""
 images = torch.stack([up, side])                     # [2, 3, 480, 640]
 images = preprocess_image(images).unsqueeze(0)       # [1, 2, 3, 224, 224]
-ids = torch.tensor([input_ids])                      # [1, S]
+ids = torch.tensor([sequence_ids])                   # [1, N]
 with torch.no_grad():
     hidden = backbone(images, ids, state.unsqueeze(0))
 print("backbone output:", tuple(hidden.shape))       # [1, 392 + L + 1, 576]

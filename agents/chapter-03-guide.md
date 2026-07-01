@@ -13,7 +13,7 @@ encoder, a SmolLM2-135M language backbone, and a state encoder into a
 views and the state token are spliced into the language backbone's own token
 stream with `masked_scatter`, so the pretrained backbone is the fuser. There is
 no separate fusion module on the main path. The reader walks out with a neural
-network that turns `(images, input_ids, state)` into a sequence of contextualized
+network that turns `(images, sequence_ids, state)` into a sequence of contextualized
 hidden states `[B, 392 + L + 1, 576]` ready for an action head (added in Chapter 4).
 
 The reader is working through this chapter with the book on one side and a
@@ -39,7 +39,7 @@ when the source is clearer.
 | 3.2 | Patch self-similarity visualization | 3.2.4 | Provided utility (`src/ch03/viz_similarity.py`) |
 | 3.3 | Loading SmolLM2 and tokenizing the instruction | 3.3.4 | Type-along |
 | 3.4 | StateEncoder | 3.4.2 | Type-along |
-| 3.5 | Composing the UnifiedEmbeddingBackbone (`build_input_ids`) | 3.4.3 | Type-along |
+| 3.5 | Composing the UnifiedEmbeddingBackbone (`build_sequence_ids`) | 3.4.3 | Type-along |
 | 3.6 | The forward pass: masked_scatter splice | 3.4.4 | Type-along |
 | 3.7 | Definition-of-done verification | 3.4.5 | Verification |
 

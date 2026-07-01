@@ -332,13 +332,14 @@ Same anatomy. You scaled differently.
 from ch03 import UnifiedEmbeddingBackbone
 
 backbone = UnifiedEmbeddingBackbone()
-input_ids = backbone.build_input_ids(text_ids)
-hidden = backbone(images, input_ids, state)
-# images:    [B, 2, 3, 224, 224]  two cameras, resized from Ch 2's (3, 480, 640) by ch03.preprocess
-# input_ids: list[int]            image + text + state template from build_input_ids
-# state:     [B, 6]               SO-101 joint positions (z-scored by ch02 collate)
-# hidden:    [B, 392 + L + 1, 576]
-# tokenizer: native SmolLM (49,152 vocab) — no expansion in ch 3
+text_ids = backbone.tokenize_instruction(instruction)
+sequence_ids = backbone.build_sequence_ids(text_ids)
+hidden = backbone(images, sequence_ids, state)
+# images:       [B, 2, 3, 224, 224]  two cameras, resized from Ch 2's (3, 480, 640) by ch03.preprocess
+# sequence_ids: list[int]            image + text + state template from build_sequence_ids
+# state:        [B, 6]               SO-101 joint positions (z-scored by ch02 collate)
+# hidden:       [B, N, 576]          N = 392 + L + 1
+# tokenizer:    native SmolLM (49,152 vocab) — no expansion in ch 3
 ```
 
 Ch 3 imports from Ch 2 via:

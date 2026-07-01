@@ -15,15 +15,17 @@ the template builds is
 so the contract Chapter 4 reads is ``[B, 392 + L + 1, 576]``.
 
 Do not rename ``UnifiedEmbeddingBackbone`` or change the ``forward``
-signature: the ``[B, 392 + L + 1, 576]`` output is the contract Chapter 4
-reads from.
+signature ``(images, sequence_ids, state)``: the ``[B, 392 + L + 1, 576]``
+output is the contract Chapter 4 reads from. ``sequence_ids`` is OUR
+fused layout (image + text + state); it is distinct from Hugging Face's
+``input_ids``, which stay the tokenizer/model API name unchanged.
 """
 
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
-from transformers import AutoModel, SiglipVisionModel
+from transformers import AutoModel, AutoTokenizer, SiglipVisionModel
 
 from ch03.state_encoder import StateEncoder
 from ch03.vision_encoder import NUM_PATCHES, SIGLIP_MODEL
@@ -111,6 +113,7 @@ class UnifiedEmbeddingBackbone(nn.Module):
         self.vision_encoder = load_siglip()  # frozen, 768-dim
         self.img_proj = nn.Linear(SIGLIP_WIDTH, SMOLLM_WIDTH)  # 768 -> 576
         self.state_proj = StateEncoder(6, SMOLLM_WIDTH)
+        self.tokenizer = AutoTokenizer.from_pretrained(SMOLLM_MODEL)
         self.language_backbone = AutoModel.from_pretrained(SMOLLM_MODEL)
         # Grow the input embedding table just far enough that both
         # placeholder ids index validly. These rows are inert: the splice
@@ -136,7 +139,18 @@ class UnifiedEmbeddingBackbone(nn.Module):
             grown.weight[: embed.num_embeddings] = embed.weight
         return grown
 
-    def build_input_ids(self, text_ids: list[int]) -> list[int]:
+    def tokenize_instruction(self, instruction: str) -> list[int]:
+        """Return the L native SmolLM2 text ids for one instruction.
+
+        HF's tokenizer hands back ``input_ids``; we pull the single
+        row out as a plain ``list[int]`` so ``build_sequence_ids`` can
+        splice the text between the image and state placeholders. No
+        padding or truncation here: batching pads in ``forward``.
+        """
+        encoded = self.tokenizer(instruction, return_tensors="pt")
+        return encoded["input_ids"][0].tolist()
+
+    def build_sequence_ids(self, text_ids: list[int]) -> list[int]:
         """Template one row: image (392) + text (L) + state (1).
 
         The 392 image placeholder ids (196 for camera 0, then 196 for
@@ -150,15 +164,16 @@ class UnifiedEmbeddingBackbone(nn.Module):
     def forward(
         self,
         images: torch.Tensor,
-        input_ids: torch.Tensor,
+        sequence_ids: torch.Tensor,
         state: torch.Tensor,
     ) -> torch.Tensor:
         """Encode, splice, and run the backbone as an encoder.
 
-        ``images`` is ``[B, 2, 3, 224, 224]`` in ``[0, 1]``; ``input_ids``
-        is ``[B, S]`` with 392 image-placeholder rows, L text rows, and 1
-        state-placeholder row per the template; ``state`` is ``[B, 6]``.
-        Returns ``[B, 392 + L + 1, 576]`` hidden states.
+        ``images`` is ``[B, 2, 3, 224, 224]`` in ``[0, 1]``;
+        ``sequence_ids`` is ``[B, N]`` with 392 image-placeholder rows,
+        L text rows, and 1 state-placeholder row per the template
+        (N = 392 + L + 1); ``state`` is ``[B, 6]``. Returns
+        ``[B, 392 + L + 1, 576]`` hidden states.
         """
         B = images.shape[0]
         siglip_features = self.vision_encoder(
@@ -167,12 +182,12 @@ class UnifiedEmbeddingBackbone(nn.Module):
         img = self.img_proj(siglip_features).reshape(
             B, -1, SMOLLM_WIDTH
         )  # [B, 392, 576] cam0 then cam1
-        emb = self.embed_tokens(input_ids)  # [B, S, 576]
+        emb = self.embed_tokens(sequence_ids)  # [B, N, 576]
         img = img.to(emb.dtype)
         state_tok = self.state_proj(state).to(emb.dtype)
-        img_mask = (input_ids == self.image_id).unsqueeze(-1)
+        img_mask = (sequence_ids == self.image_id).unsqueeze(-1)
         emb = emb.masked_scatter(img_mask, img)  # fill 392 slots
-        st_mask = (input_ids == self.state_id).unsqueeze(-1)
+        st_mask = (sequence_ids == self.state_id).unsqueeze(-1)
         emb = emb.masked_scatter(st_mask, state_tok)  # fill 1 slot
         h = self.language_backbone(inputs_embeds=emb).last_hidden_state
         return h  # [B, 392 + L + 1, 576]

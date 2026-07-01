@@ -175,7 +175,12 @@ Fusion is a unified-embedding splice: image and state tokens are written into th
 class UnifiedEmbeddingBackbone(nn.Module):
     def __init__(self) -> None: ...   # hidden width 576 (backbone native)
 
-    def build_input_ids(
+    def tokenize_instruction(
+        self,
+        instruction: str,
+    ) -> list[int]:                  # L native SmolLM2 text ids
+
+    def build_sequence_ids(
         self,
         text_ids: list[int],
     ) -> list[int]:                  # image + text + state template
@@ -183,7 +188,7 @@ class UnifiedEmbeddingBackbone(nn.Module):
     def forward(
         self,
         images: torch.Tensor,        # [B, 2, 3, 224, 224] two cameras
-        input_ids: torch.Tensor,     # from build_input_ids
+        sequence_ids: torch.Tensor,  # [B, N] from build_sequence_ids
         state: torch.Tensor,         # [B, state_dim]
     ) -> torch.Tensor:               # [B, 392 + L + 1, 576]
         ...

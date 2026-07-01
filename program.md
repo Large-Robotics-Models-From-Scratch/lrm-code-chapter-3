@@ -69,7 +69,7 @@ For each of the 7 listings in `docs/chapter_3_plan.md`, in order:
    | 3.2 | `src/ch03/viz_similarity.py` (patch self-similarity) | provided utility |
    | 3.3 | `src/ch03/language_backbone.py` (SmolLM2, no vocab expansion) | type-along |
    | 3.4 | `src/ch03/state_encoder.py` (6-dim -> 576 MLP) | type-along |
-   | 3.5 | `src/ch03/vla_backbone.py` (compose the three streams + `build_input_ids`) | type-along |
+   | 3.5 | `src/ch03/vla_backbone.py` (compose the three streams + `build_sequence_ids`) | type-along |
    | 3.6 | `src/ch03/vla_backbone.py` (`forward`: masked_scatter splice into the backbone's stream) | type-along |
    | 3.7 | `tests/` (definition-of-done verification: shapes, splice, no vocab change) | verification |
 
@@ -85,11 +85,11 @@ For each of the 7 listings in `docs/chapter_3_plan.md`, in order:
 
 ## 4. The Export Contract
 
-`UnifiedEmbeddingBackbone.forward(images, input_ids, state) -> [B, 392 + L + 1, 576]` is the **frozen interface** between Ch 3 and Ch 4. Signature specified in `docs/chapter_3_plan.md` "Hand-off contract to chapter 4" and in `ARCHITECTURE_LOG.md`.
+`UnifiedEmbeddingBackbone.forward(images, sequence_ids, state) -> [B, 392 + L + 1, 576]` is the **frozen interface** between Ch 3 and Ch 4. Signature specified in `docs/chapter_3_plan.md` "Hand-off contract to chapter 4" and in `ARCHITECTURE_LOG.md`.
 
 **Implications:**
-- Do not rename `UnifiedEmbeddingBackbone` or change the forward signature.
-- `images` is `[B, 2, 3, 224, 224]` (two cameras); `input_ids` comes from `build_input_ids(text_ids)` (image + text + state order); `state` is `[B, 6]`.
+- Do not rename `UnifiedEmbeddingBackbone` or change the forward signature. `sequence_ids` is OUR fused layout; HF's `input_ids` (tokenizer/model API) is a different name and stays unchanged. **Ch 4's repo must adopt `build_sequence_ids` / `sequence_ids`.**
+- `images` is `[B, 2, 3, 224, 224]` (two cameras); `sequence_ids` comes from `build_sequence_ids(text_ids)` (image + text + state order, length `N = 392 + L + 1`); `state` is `[B, 6]`.
 - The output tensor shape is part of the contract - Ch 4 reads the rightmost K positions.
 - The tokenizer is SmolLM2's native (49,152 vocab) - vocab expansion belongs to Ch 4. The backbone grows its input embeddings by two inert splice-marker rows, which leaves `config.vocab_size` at 49,152.
 - Reverse-check enforced via `chapter-continuity` agent: no `add_tokens` or `resize_token_embeddings` in Ch 3 code.
