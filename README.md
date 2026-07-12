@@ -117,18 +117,21 @@ lrm-code-chapter-3/
 ## Hand-off contract to chapter 4
 
 ```python
+import torch
 from ch03 import UnifiedEmbeddingBackbone
 
 backbone = UnifiedEmbeddingBackbone()
 text_ids = backbone.tokenize_instruction(instruction)
-sequence_ids = backbone.build_sequence_ids(text_ids)
+sequence_ids = torch.tensor(
+    [backbone.build_sequence_ids(text_ids)], dtype=torch.long
+)  # [1, N]
 hidden = backbone(images, sequence_ids, state)
 # images:       [B, 2, 3, 224, 224]   two cameras (up + side), preprocessed
-# text_ids:     list[int]             L native SmolLM ids from tokenize_instruction
-# sequence_ids: list[int]             image + text + state template from build_sequence_ids
+# text_ids:     list[int]             L native SmolLM2 ids from tokenize_instruction
+# sequence_ids: [B, N] long tensor    image + text + state template rows
 # state:        [B, 6]                SO-101 state (5 joint positions + gripper) per Ch 2 Table 2.2
 # hidden:       [B, N, 576]           N = 392 + L + 1
-# tokenizer:    native SmolLM (49,152 vocab) - no expansion in Ch 3
+# tokenizer:    native SmolLM2 (49,152 vocab) - no expansion in Ch 3
 ```
 
 `fusion_transformer.py` is the optional separate-encoder fusion exercise (Exercise 3.4), kept off the main path; the shipped backbone fuses by splicing image and state tokens into the language backbone's own stream.
