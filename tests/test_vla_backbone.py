@@ -59,7 +59,7 @@ def test_no_vocab_expansion(backbone):
 
 
 @pytest.mark.integration
-def test_mixed_length_batch_contract(backbone):
+def test_longer_instruction_contract(backbone):
     # A genuinely longer instruction still gives 392 + L + 1.
     text_ids = list(range(100, 112))  # 12 text tokens
     L = len(text_ids)
@@ -69,3 +69,21 @@ def test_mixed_length_batch_contract(backbone):
     with torch.no_grad():
         hidden = backbone(images, sequence_ids, state)
     assert hidden.shape == (2, IMAGE_TOKENS + L + 1, 576)
+
+
+@pytest.mark.integration
+def test_malformed_template_rejected(backbone):
+    # masked_scatter would silently drop tokens on a malformed
+    # template; forward must reject it instead.
+    text_ids = [5, 6, 7]
+    good = backbone.build_sequence_ids(text_ids)
+    images = _two_camera_batch(1)
+    state = torch.rand(1, 6)
+
+    missing_image = torch.tensor([[good[0]] * 0 + good[1:]])
+    with pytest.raises(ValueError, match="image placeholders"):
+        backbone(images, missing_image, state)
+
+    no_state = torch.tensor([good[:-1] + [5]])
+    with pytest.raises(ValueError, match="state"):
+        backbone(images, no_state, state)

@@ -37,10 +37,14 @@ This repo contains the code for **the VLA backbone**: a frozen SigLIP vision enc
 
 **To Chapter 4**:
 ```python
+import torch
 from ch03 import UnifiedEmbeddingBackbone
+
 backbone = UnifiedEmbeddingBackbone()
 text_ids = backbone.tokenize_instruction(instruction)  # L native SmolLM2 ids
-sequence_ids = backbone.build_sequence_ids(text_ids)
+sequence_ids = torch.tensor(
+    [backbone.build_sequence_ids(text_ids)], dtype=torch.long
+)  # [1, N]
 hidden = backbone(images, sequence_ids, state)  # images: [B, 2, 3, 224, 224]
 # hidden: [B, N, 576]  where N = 392 + L + 1
 ```

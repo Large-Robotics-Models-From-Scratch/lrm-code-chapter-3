@@ -6,7 +6,7 @@
 **Code repo**: `Large-Robotics-Models-From-Scratch/lrm-code-chapter-3`
 **Built on**: chapter 2 (`from ch02 import make_pickplace_dataloader, normalize, denormalize`; dataset = `lerobot/svla_so101_pickplace`; sim env = `PickCubeSO100-v1`)
 **Hands off to**: chapter 4 (action head + action tokenization + vocab expansion all happen there)
-**Last updated**: 2026-06-15 (v6 — frozen-vision visualization switched from attention rollout to **patch self-similarity**, after a co-author flagged rollout looked blurry and a deep-research pass confirmed it. Verdict: on a CLS-less contrastive encoder rollout has no CLS row and deep-layer token mixing breaks it; self-similarity (cosine sim of a query patch to all patches, on raw 768-dim SigLIP features) is crisper, more honest, less code, and transfers to the DINOv2 exercise. Code simplified — no `output_attentions`/eager; encoder always returns `[B,196,512]`. Figures 3.3/3.6 are self-sim grids (`viz_similarity.py`). Rollout demoted to a one-line mention. Exercise 3.1 now re-runs self-sim on DINOv2 + introduces PCA-to-RGB (DINOv2's canonical viz); new Exercise 3.4 = patch-to-text grounding with the MaskCLIP value-readout fix. Research report: deep-research wf_90df93b8-73d.)
+**Last updated**: 2026-06-15 (v6 — frozen-vision visualization switched from attention rollout to **patch self-similarity**, after a co-author flagged rollout looked blurry and a deep-research pass confirmed it. Verdict: on a CLS-less contrastive encoder rollout has no CLS row and deep-layer token mixing breaks it; self-similarity (cosine sim of a query patch to all patches, on raw 768-dim SigLIP features) is crisper, more honest, less code, and transfers to the DINOv2 exercise. Code simplified — no `output_attentions`/eager; encoder always returns `[B, 196, 576]`. Figures 3.3/3.6 are self-sim grids (`viz_similarity.py`). Rollout demoted to a one-line mention. Exercise 3.1 now re-runs self-sim on DINOv2 + introduces PCA-to-RGB (DINOv2's canonical viz); new Exercise 3.4 = patch-to-text grounding with the MaskCLIP value-readout fix. Research report: deep-research wf_90df93b8-73d.)
 **v5**: 2026-06-11 (object-tracking replaced prompted-attention; facts verified; +3 exercises; tokenization callout; SmolLM trainable / SigLIP frozen)
 **Previously**: 2026-05-27 (v4 — aligned with Ch 2 verified facts: state_dim=6, camera keys `up`/`side`, dataset `svla_so101_pickplace`, image (3, 480, 640), SO-100 sim + SO-101 dataset framing)
 
@@ -190,7 +190,7 @@ Three stories woven together:
 
 **Intuition signpost** (close section): "You have a language backbone that turns an instruction into 512-dim hidden states. Chapter 4 will teach it new words — words that mean motor commands. For now, it's a small but real LLM, projected to our common width."
 
-**Reader state at end**: Has a working language backbone. Native SmolLM tokenizer encodes the instruction. Output is `[B, L, 512]` per-token hidden states. No vocab modifications, no action tokens. Save/load uses the native SmolLM tokenizer.
+**Reader state at end**: Has a working language backbone. Native SmolLM tokenizer encodes the instruction. Output is `[B, L, 576]` per-token hidden states. No vocab modifications, no action tokens. Save/load uses the native SmolLM2 tokenizer.
 
 ---
 
@@ -309,7 +309,7 @@ Same anatomy. You scaled differently.
 | Camera input | both `observation.images.up` and `observation.images.side` (two cameras) | 392 image tokens = 2 x 196 |
 | Image preprocessing | Resize 480×640 → 224×224 (Ch 2 ships native dataset resolution; Ch 3 resizes for SigLIP) | Match SigLIP input size |
 | Language backbone | SmolLM2-135M | Small, OSS, runs on T4, good tokenizer |
-| Tokenizer changes in ch 3 | **None** — native SmolLM tokenizer | Vocab expansion moved to ch 4 |
+| Tokenizer changes in ch 3 | **None** — native SmolLM2 tokenizer | Vocab expansion moved to ch 4 |
 | Fusion mechanism | Unified embedding: image and state tokens spliced into the backbone's stream via `masked_scatter` (the pretrained backbone fuses) | No separate fusion module on the main path; `fusion_transformer.py` is the optional separate-encoder exercise |
 | Hidden dim | 576 | The language backbone's native width; all streams project to 576 |
 | Attention heads | (backbone native) | Provided by the pretrained SmolLM2-135M backbone |
@@ -329,17 +329,20 @@ Same anatomy. You scaled differently.
 ## Hand-off contract to chapter 4
 
 ```python
+import torch
 from ch03 import UnifiedEmbeddingBackbone
 
 backbone = UnifiedEmbeddingBackbone()
 text_ids = backbone.tokenize_instruction(instruction)
-sequence_ids = backbone.build_sequence_ids(text_ids)
+sequence_ids = torch.tensor(
+    [backbone.build_sequence_ids(text_ids)], dtype=torch.long
+)  # [1, N]
 hidden = backbone(images, sequence_ids, state)
 # images:       [B, 2, 3, 224, 224]  two cameras, resized from Ch 2's (3, 480, 640) by ch03.preprocess
-# sequence_ids: list[int]            image + text + state template from build_sequence_ids
+# sequence_ids: [B, N] long tensor   image + text + state template rows
 # state:        [B, 6]               SO-101 joint positions (z-scored by ch02 collate)
 # hidden:       [B, N, 576]          N = 392 + L + 1
-# tokenizer:    native SmolLM (49,152 vocab) — no expansion in ch 3
+# tokenizer:    native SmolLM2 (49,152 vocab) — no expansion in ch 3
 ```
 
 Ch 3 imports from Ch 2 via:

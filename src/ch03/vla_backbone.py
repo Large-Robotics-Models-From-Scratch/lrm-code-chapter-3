@@ -145,7 +145,9 @@ class UnifiedEmbeddingBackbone(nn.Module):
         HF's tokenizer hands back ``input_ids``; we pull the single
         row out as a plain ``list[int]`` so ``build_sequence_ids`` can
         splice the text between the image and state placeholders. No
-        padding or truncation here: batching pads in ``forward``.
+        padding or truncation here: callers building variable-L
+        batches pad the assembled ``sequence_ids`` rows themselves
+        (Chapter 4's collate does this).
         """
         encoded = self.tokenizer(instruction, return_tensors="pt")
         return encoded["input_ids"][0].tolist()
@@ -175,6 +177,27 @@ class UnifiedEmbeddingBackbone(nn.Module):
         (N = 392 + L + 1); ``state`` is ``[B, 6]``. Returns
         ``[B, 392 + L + 1, 576]`` hidden states.
         """
+        # Guard the splice first: masked_scatter fills however many
+        # True positions the mask has, so a malformed template (too
+        # few placeholders, or a stray reserved id) would silently
+        # drop part of img/state_tok yet still return the expected
+        # shape. A stray id would also index past the embedding table.
+        img_mask = sequence_ids == self.image_id
+        st_mask = sequence_ids == self.state_id
+        img_counts = img_mask.sum(dim=1)
+        if not bool((img_counts == IMAGE_TOKENS).all()):
+            raise ValueError(
+                f"every sequence_ids row needs exactly {IMAGE_TOKENS} "
+                f"image placeholders (id {self.image_id}); got "
+                f"{img_counts.tolist()}."
+            )
+        st_counts = st_mask.sum(dim=1)
+        if not bool((st_counts == 1).all()):
+            raise ValueError(
+                f"every sequence_ids row needs exactly 1 state "
+                f"placeholder (id {self.state_id}); got "
+                f"{st_counts.tolist()}."
+            )
         B = images.shape[0]
         siglip_features = self.vision_encoder(
             images.flatten(0, 1)
@@ -185,9 +208,7 @@ class UnifiedEmbeddingBackbone(nn.Module):
         emb = self.embed_tokens(sequence_ids)  # [B, N, 576]
         img = img.to(emb.dtype)
         state_tok = self.state_proj(state).to(emb.dtype)
-        img_mask = (sequence_ids == self.image_id).unsqueeze(-1)
-        emb = emb.masked_scatter(img_mask, img)  # fill 392 slots
-        st_mask = (sequence_ids == self.state_id).unsqueeze(-1)
-        emb = emb.masked_scatter(st_mask, state_tok)  # fill 1 slot
+        emb = emb.masked_scatter(img_mask.unsqueeze(-1), img)  # 392 slots
+        emb = emb.masked_scatter(st_mask.unsqueeze(-1), state_tok)  # 1 slot
         h = self.language_backbone(inputs_embeds=emb).last_hidden_state
         return h  # [B, 392 + L + 1, 576]

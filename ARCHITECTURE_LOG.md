@@ -43,8 +43,8 @@ The rows below predate this update and describe the superseded v3 design; retain
 |---|---|---|
 | Vision encoder = SigLIP-base/16 (224) | Image-text aligned, 196 patch tokens | Ch 4-10; see `docs/decisions/vision-encoder-choice.md` |
 | Vision encoder frozen + pinned to `eval()` | Small dataset, inherit pretrain; `train()` override keeps SigLIP in eval so dropout never corrupts the "frozen" features during Ch 4 training | Ch 4-5 (Ch 6 may LoRA-fine-tune) |
-| Frozen-vision visualization = **patch self-similarity** (not attention rollout) | Deep-research verdict (2026-06-15): on a CLS-less contrastive encoder, rollout has no CLS row to read and deep-layer token mixing means attention no longer points to input patches; self-similarity (cosine sim of a query patch to all patches, on the raw 768-dim SigLIP features) is crisper, more honest, less code, and transfers to the DINOv2 exercise. No `output_attentions`/eager needed — encoder always SDPA, returns `[B,196,512]` | Ch 3 figures 3.3/3.6; viz_similarity.py |
-| Camera input = `observation.images.up` only | Single-stream simplicity | Ch 6 adds `observation.images.side` |
+| Frozen-vision visualization = **patch self-similarity** (not attention rollout) | Deep-research verdict (2026-06-15): on a CLS-less contrastive encoder, rollout has no CLS row to read and deep-layer token mixing means attention no longer points to input patches; self-similarity (cosine sim of a query patch to all patches, on the raw 768-dim SigLIP features) is crisper, more honest, less code, and transfers to the DINOv2 exercise. No `output_attentions`/eager needed — encoder always SDPA, returns `[B, 196, 576]` | Ch 3 figures 3.3/3.6; viz_similarity.py |
+| Camera input = both `observation.images.up` and `observation.images.side` (392 image tokens) | Two views disambiguate depth/occlusion; matches Ch 2 dataset | All later chapters |
 | Image preprocessing | Ch 2 ships `[3, 480, 640]` float in `[0, 1]`; `preprocess_image` resizes to `[3, 224, 224]`. SigLIP `[-1,1]` normalization lives inside `VisionEncoder` | All later chapters |
 | Language backbone = SmolLM-135M, **trainable** (not frozen) | A small LM benefits from fine-tuning on instructions; Ch 4 trains it end-to-end with the action head. Only the vision encoder is frozen in Ch 3 | Ch 4 trains SmolLM; Ch 6 may LoRA |
 | **No vocab expansion in Ch 3** | Vocab expansion + action tokens belong to Ch 4 (action head story) | Ch 4 calls `add_tokens` + `resize_token_embeddings` as its first step |
@@ -61,11 +61,14 @@ The rows below predate this update and describe the superseded v3 design; retain
 ### To chapter 4
 
 ```python
+import torch
 from ch03 import UnifiedEmbeddingBackbone
 
 backbone = UnifiedEmbeddingBackbone()
 text_ids = backbone.tokenize_instruction(instruction)
-sequence_ids = backbone.build_sequence_ids(text_ids)
+sequence_ids = torch.tensor(
+    [backbone.build_sequence_ids(text_ids)], dtype=torch.long
+)  # [1, N]
 hidden = backbone(images, sequence_ids, state)
 # images:       [B, 2, 3, 224, 224]  two cameras (up, side), preprocessed ([0,1] from Ch 2)
 # sequence_ids: [B, N]               template: 392 image + L text + 1 state placeholder (N = 392 + L + 1)

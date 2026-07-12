@@ -86,7 +86,7 @@ try:
     batch = next(iter(loader))
     up = batch["observation.images.up"][0]      # [3, 480, 640] in [0,1]
     side = batch["observation.images.side"][0]   # [3, 480, 640] in [0,1]
-    frames = list(batch["observation.images.up"][:3])  # cube in 3 spots
+    frames = list(batch["observation.images.up"][:3])  # brick in 3 spots
     state = batch["observation.state"][0]        # [6] z-scored
     instruction = batch["task"][0]
 except Exception as exc:                       # no [data] extra / no net
@@ -95,7 +95,7 @@ except Exception as exc:                       # no [data] extra / no net
     side = torch.rand(3, 480, 640)
     frames = [torch.rand(3, 480, 640) for _ in range(3)]
     state = torch.zeros(6)
-    instruction = "pick up the red cube"
+    instruction = "put the lego brick in the box"
 
 print("up:", tuple(up.shape), "| side:", tuple(side.shape))
 print("state:", tuple(state.shape), "| instruction:", instruction)
@@ -125,10 +125,10 @@ md("""
 ### Listing 3.2 What the frozen encoder groups (patch self-similarity)
 
 Pick one patch and measure cosine similarity between its frozen SigLIP
-feature and every other patch. Querying a cube patch lights up the cube;
+feature and every other patch. Querying a brick patch lights up the brick;
 querying an arm patch lights up the arm. The frozen encoder already
 groups object regions, with no training. (Pick grid positions that land
-on the cube and the arm in your frame; the grid is 14x14.)
+on the brick and the arm in your frame; the grid is 14x14.)
 """)
 
 code("""
@@ -137,37 +137,18 @@ from ch03.viz_similarity import similarity_grid
 fig_3_3 = similarity_grid(            # Figure 3.3
     vision_encoder,
     up,
-    [(11, 6, "cube query"), (5, 7, "arm query")],
+    [(11, 6, "brick query"), (5, 7, "arm query")],
 )
 """)
 
 md("""
-## 3.3 The brain: language backbone
+## 3.3 The state encoder
 
-### Listing 3.3 Loading SmolLM2 and encoding the instruction
-
-``LanguageBackbone`` uses SmolLM2-135M with its native 49,152-token
-tokenizer (no vocabulary changes here; that is Chapter 4's first step).
-SmolLM2's native hidden width is 576, the book's common width, so the
-language stream needs no projection. Unlike the frozen vision encoder,
-SmolLM2 stays trainable so Chapter 4 can fine-tune it.
-""")
-
-code("""
-from ch03 import LanguageBackbone
-
-language_backbone = LanguageBackbone()
-lang_hidden, lang_mask = language_backbone([instruction])
-print("language tokens:", tuple(lang_hidden.shape))  # [1, L, 576]
-""")
-
-md("""
-## 3.4 State, then unified-embedding fusion
-
-### Listing 3.4 The state encoder
+### Listing 3.3 The state encoder
 
 A two-layer MLP (``Linear -> GELU -> Linear``) lifts the 6 joint numbers
-into one 576-dim token that sits beside the image and language tokens.
+(five arm joints plus the gripper) into one 576-dim state token that sits
+beside the image and language tokens.
 """)
 
 code("""
@@ -179,7 +160,39 @@ print("state token:", tuple(state_token.shape))      # [1, 576]
 """)
 
 md("""
-### Listing 3.5 Composing the UnifiedEmbeddingBackbone
+## 3.4 The brain: the language backbone
+
+### Listing 3.4 Looking up SmolLM2 token embeddings
+
+SmolLM2-135M's native tokenizer (49,152 ids, no vocabulary changes here;
+that is Chapter 4's first step) turns the instruction into L token ids,
+and the embedding table maps each id to a 576-dim vector: a row lookup,
+no Transformer layers yet. SmolLM2's native width is already the book's
+common width D=576, so the language stream needs no projection. These
+embeddings are uncontextualized; contextualization happens once, over
+the whole fused sequence, in Section 3.5.
+""")
+
+code("""
+from transformers import AutoModel, AutoTokenizer
+
+SMOLLM_MODEL = "HuggingFaceTB/SmolLM2-135M"
+tokenizer = AutoTokenizer.from_pretrained(SMOLLM_MODEL)
+language_backbone = AutoModel.from_pretrained(SMOLLM_MODEL)
+
+input_ids = tokenizer(instruction, return_tensors="pt").input_ids
+embed_tokens = language_backbone.get_input_embeddings()
+embeddings = embed_tokens(input_ids)
+print("token ids:", input_ids[0].tolist())
+print("language embeddings:", tuple(embeddings.shape))  # [1, L, 576]
+""")
+
+md("""
+## 3.5 Multimodal fusion
+""")
+
+md("""
+### Listing 3.5 Building the unified-embedding backbone
 
 The backbone owns the three projections (a frozen SigLIP, a 768 to 576
 image projection, and the state encoder) plus the SmolLM2-135M backbone
@@ -212,7 +225,7 @@ print("vocab size unchanged:",
 """)
 
 md("""
-### Listing 3.6 The forward pass: the masked_scatter splice
+### Listing 3.6 The unified-embedding forward pass
 
 ``forward(images, sequence_ids, state)`` encodes the two camera views,
 projects them to 576, looks up the template's embeddings, and uses
@@ -232,7 +245,7 @@ print("backbone output:", tuple(hidden.shape))       # [1, 392 + L + 1, 576]
 """)
 
 md("""
-### Listing 3.7 Definition of done: verifying the backbone
+### Listing 3.7 Instantiate, run one batch, check the contract
 
 Before handing the backbone to Chapter 4, check the contract holds: the
 output sequence is ``392 + L + 1`` long and 576 wide, the language stream
@@ -242,22 +255,22 @@ the ``tests/`` suite asserts.
 """)
 
 code("""
-B, S, width = hidden.shape
-assert S == 392 + L + 1, (S, L)
+B, N, width = hidden.shape
+assert N == 392 + L + 1, (N, L)
 assert width == 576, width
 assert backbone.language_backbone.config.vocab_size == 49152
-print("contract OK:", (B, S, width), "| vocab still 49152")
+print("contract OK:", (B, N, width), "| vocab still 49152")
 """)
 
 md("""
 ### The frozen encoder tracks the object across frames
 
-Query the cube patch in three frames where the cube spawns in different
-positions. The highlighted region follows the cube each time. With no
+Query the brick patch in three frames where the brick sits in different
+positions. The highlighted region follows the brick each time. With no
 training, the frozen vision encoder localizes the object wherever it is,
 which is why we can freeze it and build the policy on top. (Each frame's
-query is the cube's grid cell in that frame; the cube moves, so the query
-moves with it.)
+query is the brick's grid cell in that frame; the brick moves, so the
+query moves with it.)
 
 The instruction does not steer this yet; the vision encoder never reads
 the language. Wiring language into where the model looks is what Chapter 4
@@ -267,16 +280,16 @@ trains.
 code("""
 from ch03.viz_similarity import tracking_grid
 
-fig_3_4 = tracking_grid(            # Figure 3.4
+fig_track = tracking_grid(          # bonus viz (not a chapter figure)
     vision_encoder,
     frames,
-    queries=[(11, 5), (11, 8), (9, 6)],   # the cube's cell in each frame
-    labels=["cube position 1", "cube position 2", "cube position 3"],
+    queries=[(11, 5), (11, 8), (9, 6)],  # the brick's cell in each frame
+    labels=["brick position 1", "brick position 2", "brick position 3"],
 )
 """)
 
 md("""
-## (Optional) Exercise 3.4: separate-encoder fusion
+## (Optional) Exercise 3.3: separate-encoder fusion
 
 The main path lets the pretrained backbone fuse the streams. The optional
 ``FusionTransformer`` is the named alternative: a from-scratch stack of
@@ -287,7 +300,7 @@ main path and is not imported by ``UnifiedEmbeddingBackbone``. (Source:
 """)
 
 code("""
-from ch03 import FusionTransformer
+from ch03.fusion_transformer import FusionTransformer
 
 fusion_transformer = FusionTransformer()              # hidden_dim=576
 dummy = torch.rand(1, 392 + L + 1, 576)
