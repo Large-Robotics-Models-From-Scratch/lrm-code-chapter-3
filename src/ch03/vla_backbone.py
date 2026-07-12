@@ -177,27 +177,6 @@ class UnifiedEmbeddingBackbone(nn.Module):
         (N = 392 + L + 1); ``state`` is ``[B, 6]``. Returns
         ``[B, 392 + L + 1, 576]`` hidden states.
         """
-        # Guard the splice first: masked_scatter fills however many
-        # True positions the mask has, so a malformed template (too
-        # few placeholders, or a stray reserved id) would silently
-        # drop part of img/state_tok yet still return the expected
-        # shape. A stray id would also index past the embedding table.
-        img_mask = sequence_ids == self.image_id
-        st_mask = sequence_ids == self.state_id
-        img_counts = img_mask.sum(dim=1)
-        if not bool((img_counts == IMAGE_TOKENS).all()):
-            raise ValueError(
-                f"every sequence_ids row needs exactly {IMAGE_TOKENS} "
-                f"image placeholders (id {self.image_id}); got "
-                f"{img_counts.tolist()}."
-            )
-        st_counts = st_mask.sum(dim=1)
-        if not bool((st_counts == 1).all()):
-            raise ValueError(
-                f"every sequence_ids row needs exactly 1 state "
-                f"placeholder (id {self.state_id}); got "
-                f"{st_counts.tolist()}."
-            )
         B = images.shape[0]
         siglip_features = self.vision_encoder(
             images.flatten(0, 1)
@@ -208,7 +187,28 @@ class UnifiedEmbeddingBackbone(nn.Module):
         emb = self.embed_tokens(sequence_ids)  # [B, N, 576]
         img = img.to(emb.dtype)
         state_tok = self.state_proj(state).to(emb.dtype)
-        emb = emb.masked_scatter(img_mask.unsqueeze(-1), img)  # 392 slots
-        emb = emb.masked_scatter(st_mask.unsqueeze(-1), state_tok)  # 1 slot
+        img_mask = (sequence_ids == self.image_id).unsqueeze(-1)
+        st_mask = (sequence_ids == self.state_id).unsqueeze(-1)
+        # Guard the splice (repo hardening; the book listing omits
+        # it): masked_scatter fills only as many slots as the mask
+        # has True positions, so a template with the wrong number of
+        # placeholders would silently drop part of img/state_tok yet
+        # still return the expected shape.
+        img_counts = img_mask.sum(dim=(1, 2))
+        if not bool((img_counts == IMAGE_TOKENS).all()):
+            raise ValueError(
+                f"every sequence_ids row needs exactly {IMAGE_TOKENS} "
+                f"image placeholders (id {self.image_id}); got "
+                f"{img_counts.tolist()}."
+            )
+        st_counts = st_mask.sum(dim=(1, 2))
+        if not bool((st_counts == 1).all()):
+            raise ValueError(
+                f"every sequence_ids row needs exactly 1 state "
+                f"placeholder (id {self.state_id}); got "
+                f"{st_counts.tolist()}."
+            )
+        emb = emb.masked_scatter(img_mask, img)  # fill 392 slots
+        emb = emb.masked_scatter(st_mask, state_tok)  # fill 1 slot
         h = self.language_backbone(inputs_embeds=emb).last_hidden_state
         return h  # [B, 392 + L + 1, 576]
