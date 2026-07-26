@@ -4,7 +4,7 @@ This module is the exercise-only separate-encoder fuser. It is not part
 of the chapter's main path and is not imported by the main backbone; it
 exists for optional exercise 3.4, where the reader bolts a from-scratch
 fusion Transformer onto the frozen streams and compares it against the
-unified-embedding fusion the chapter ships.
+token-level fusion the chapter ships.
 
 In separate-encoder fusion each stream is encoded on its own and a
 dedicated module attends over the concatenated image, language, and
@@ -13,8 +13,8 @@ self-attention blocks that mixes the three streams into a single
 contextualized sequence.
 
 Attention is causal (each token attends only to itself and earlier
-positions), matching the unified-embedding backbone so the comparison is
-like for like and Chapter 4's autoregressive action prediction drops on
+positions), matching the VLA backbone so the comparison is like for
+like and Chapter 4's autoregressive action prediction drops on
 without architecture surgery.
 """
 

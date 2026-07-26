@@ -47,7 +47,24 @@ Three follow-ups, none of which change the architecture or the Ch 4 contract.
 2. **The splice is tested position by position.** Every earlier test asserted shapes, counts, and template order, all of which stay correct under a swapped camera, a transposed reshape, or interleaved batch rows. `test_splice_puts_every_vector_at_the_right_position` captures `inputs_embeds` with a forward pre-hook on the language backbone, then checks, for a batch of 2 with four distinct frames, that positions 0..195 are camera 0, 196..391 are camera 1, the next L are the embedding-table rows for the text ids, and the last is that row's state token. Verified to fail on both a camera swap and a batch-interleaving reshape.
 3. **`_grow_embeddings` inherits the source table's dtype and device.** `nn.Embedding` defaults to float32; under transformers 5 SmolLM2 loads in bfloat16 and `forward` died with a dtype mismatch. No-op under this repo's `transformers<5` pin (parameter counts and all existing tests unchanged), so readers with a fresh install are covered either way.
 
-The rows below predate this update and describe the superseded v3 design; retained for history.
+### Update (2026-07): backbone renamed to `VLABackbone`, fusion term retired
+
+A rename, nothing else. No behaviour change, no compatibility alias.
+
+| Changed | From | To |
+|---|---|---|
+| Backbone class | `UnifiedEmbeddingBackbone` | `VLABackbone` |
+| Fusion term in prose | "unified-embedding fusion" | "token-level fusion" (Yin et al., 2023, arXiv:2306.13549) |
+
+The book has retired "unified-embedding fusion" as its term in favour of the established literature term. The class was named after the retired term, and "unified embedding" also collides with SigLIP's shared image-text embedding space, which section 3.2 spends pages on. `VLABackbone` makes no taxonomy claim, matches the chapter title, and aligns the class with its own module name `vla_backbone.py` and test file `test_vla_backbone.py`. Done now because Chapter 4 is still in draft and MEAP has not shipped.
+
+The mechanism is untouched: image and state tokens are still spliced into the language backbone's own input embeddings with `masked_scatter` and the pretrained attention still does the fusing. Parameter counts (135,295,488 trainable / 92,884,224 frozen / 228,179,712 total), the `[B, 392 + L + 1, 576]` output contract, and all 52 tests are identical before and after.
+
+**Chapter 4's repo must adopt `VLABackbone`.** No `UnifiedEmbeddingBackbone` alias ships - two names for one class is worse than a clean break, and nothing published depends on the old one.
+
+The dated update sections above are records of their moment and keep the class name they were written with; only live contracts below were renamed.
+
+The rows below predate the v5 update and describe the superseded v3 design; retained for history.
 
 ## Locked decisions inherited from earlier chapters
 
@@ -89,9 +106,9 @@ The rows below predate this update and describe the superseded v3 design; retain
 
 ```python
 import torch
-from ch03 import UnifiedEmbeddingBackbone
+from ch03 import VLABackbone
 
-backbone = UnifiedEmbeddingBackbone()
+backbone = VLABackbone()
 text_ids = backbone.tokenize_instruction(instruction)
 sequence_ids = torch.tensor(
     [backbone.build_sequence_ids(text_ids)], dtype=torch.long

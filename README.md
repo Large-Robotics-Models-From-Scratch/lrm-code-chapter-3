@@ -2,7 +2,7 @@
 
 Companion code for **Chapter 3** of *Build a Large Robot Model (From Scratch)* (Manning).
 
-This chapter builds the **VLA backbone**: a frozen SigLIP vision encoder + a SmolLM2-135M language backbone + a state encoder, fused by **unified embedding**. The two camera views and the state are projected and spliced into the language backbone's own token stream, so the pretrained backbone is the fuser - there is no separate fusion module on the main path. The output is a sequence of contextualized hidden states ready for an action head (added in Chapter 4).
+This chapter builds the **VLA backbone**: a frozen SigLIP vision encoder + a SmolLM2-135M language backbone + a state encoder, fused by **token-level fusion**. The two camera views and the state are projected and spliced into the language backbone's own token stream, so the pretrained backbone is the fuser - there is no separate fusion module on the main path. The output is a sequence of contextualized hidden states ready for an action head (added in Chapter 4).
 
 ## What you build
 
@@ -37,7 +37,7 @@ images, state, instruction = load_sample()
 |---|---|
 | Vision encoder | SigLIP-base/16 (frozen) |
 | Language backbone | SmolLM2-135M (native tokenizer; **no vocab expansion** - that's Ch 4) |
-| Fusion | Unified embedding: image and state tokens spliced into the backbone's stream via `masked_scatter`; the pretrained backbone fuses (no separate fusion module on the main path) |
+| Fusion | Token-level fusion: image and state tokens spliced into the backbone's stream via `masked_scatter`; the pretrained backbone fuses (no separate fusion module on the main path) |
 | Hidden dim | 576 (the backbone's native width) |
 | Robot | SO-100 (6-DOF arm + 1 gripper) |
 | Camera input | both `observation.images.up` and `observation.images.side` (two cameras, 392 image tokens = 2 x 196) |
@@ -100,7 +100,7 @@ lrm-code-chapter-3/
 │   ├── language_backbone.py        # PR 3 — SmolLM2, native tokenizer
 │   ├── state_encoder.py            # PR 4 — 6→576 MLP
 │   ├── fusion_transformer.py       # optional separate-encoder fusion exercise (off main path)
-│   ├── vla_backbone.py             # PR 5 — UnifiedEmbeddingBackbone, composes the above
+│   ├── vla_backbone.py             # PR 5 — VLABackbone, composes the above
 │   ├── viz_attention.py            # PR 2 — attention rollout
 │   ├── viz_prompted_attention.py   # PR 6 — 3-prompt attention grid
 │   ├── preprocess.py               # PR 5 — image preprocessing
@@ -134,9 +134,9 @@ lrm-code-chapter-3/
 
 ```python
 import torch
-from ch03 import UnifiedEmbeddingBackbone
+from ch03 import VLABackbone
 
-backbone = UnifiedEmbeddingBackbone()
+backbone = VLABackbone()
 text_ids = backbone.tokenize_instruction(instruction)
 sequence_ids = torch.tensor(
     [backbone.build_sequence_ids(text_ids)], dtype=torch.long

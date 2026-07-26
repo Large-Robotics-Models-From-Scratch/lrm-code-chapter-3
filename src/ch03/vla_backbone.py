@@ -1,10 +1,10 @@
 """VLA backbone: vision, language, and state fused in one sequence.
 
 This is the chapter's deliverable and the frozen interface Chapter 4
-builds on. ``UnifiedEmbeddingBackbone`` projects the two camera views
-into the language backbone's own token stream and lets the pretrained
-attention do the fusion. There is no separate fusion transformer: the
-language backbone is the fuser.
+builds on. ``VLABackbone`` projects the two camera views into the
+language backbone's own token stream and lets the pretrained attention
+do the fusion. There is no separate fusion transformer: the language
+backbone is the fuser.
 
 The image and state tokens are spliced into reserved placeholder rows of
 the backbone's input embeddings with ``masked_scatter``. The token order
@@ -21,10 +21,10 @@ normalization all stay inside it. The grown input embedding table is
 handed back to the language backbone, so the whole model holds exactly
 one embedding table and one image projection.
 
-Do not rename ``UnifiedEmbeddingBackbone`` or change the ``forward``
-signature ``(images, sequence_ids, state)``: the ``[B, 392 + L + 1, 576]``
-output is the contract Chapter 4 reads from. ``sequence_ids`` is OUR
-fused layout (image + text + state); it is distinct from Hugging Face's
+Do not rename ``VLABackbone`` or change the ``forward`` signature
+``(images, sequence_ids, state)``: the ``[B, 392 + L + 1, 576]`` output
+is the contract Chapter 4 reads from. ``sequence_ids`` is OUR fused
+layout (image + text + state); it is distinct from Hugging Face's
 ``input_ids``, which stay the tokenizer/model API name unchanged.
 """
 
@@ -52,7 +52,7 @@ DEFAULT_IMAGE_ID = SMOLLM_VOCAB
 DEFAULT_STATE_ID = SMOLLM_VOCAB + 1
 
 
-class UnifiedEmbeddingBackbone(nn.Module):
+class VLABackbone(nn.Module):
     """Fuse vision, language, and state in the backbone's own stream."""
 
     def __init__(

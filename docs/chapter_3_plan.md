@@ -1,6 +1,6 @@
 # Chapter 3: Building the VLA Backbone — Structure & Content Plan (v3)
 
-> **Superseded by v5 (shipped code)**: the prose below is a historical plan snapshot. The shipped backbone is `UnifiedEmbeddingBackbone` (not `VLABackbone`), uses `SmolLM2-135M`, hidden width **576** (the backbone's native width, no 512 down-projection), **two cameras** (`up` + `side`) for **392** image tokens, and fuses by splicing image and state tokens into the language backbone's own stream via `masked_scatter` (the pretrained backbone is the fuser; there is no separate fusion transformer on the main path - `fusion_transformer.py` is only the optional separate-encoder exercise). Output contract: `[B, 392 + L + 1, 576]`. Load-bearing facts are corrected inline below; where a section is clearly a historical snapshot, treat the v5 facts here as authoritative.
+> **Superseded by v5 (shipped code)**: the prose below is a historical plan snapshot. The shipped backbone is `VLABackbone` (the v3 name, kept), uses `SmolLM2-135M`, hidden width **576** (the backbone's native width, no 512 down-projection), **two cameras** (`up` + `side`) for **392** image tokens, and fuses by splicing image and state tokens into the language backbone's own stream via `masked_scatter` (the pretrained backbone is the fuser; there is no separate fusion transformer on the main path - `fusion_transformer.py` is only the optional separate-encoder exercise). Output contract: `[B, 392 + L + 1, 576]`. Load-bearing facts are corrected inline below; where a section is clearly a historical snapshot, treat the v5 facts here as authoritative.
 
 **Author**: Krishnam Gupta
 **Code repo**: `Large-Robotics-Models-From-Scratch/lrm-code-chapter-3`
@@ -310,7 +310,7 @@ Same anatomy. You scaled differently.
 | Image preprocessing | Resize 480×640 → 224×224 (Ch 2 ships native dataset resolution; Ch 3 resizes for SigLIP) | Match SigLIP input size |
 | Language backbone | SmolLM2-135M | Small, OSS, runs on T4, good tokenizer |
 | Tokenizer changes in ch 3 | **None** — native SmolLM2 tokenizer | Vocab expansion moved to ch 4 |
-| Fusion mechanism | Unified embedding: image and state tokens spliced into the backbone's stream via `masked_scatter` (the pretrained backbone fuses) | No separate fusion module on the main path; `fusion_transformer.py` is the optional separate-encoder exercise |
+| Fusion mechanism | Token-level fusion: image and state tokens spliced into the backbone's stream via `masked_scatter` (the pretrained backbone fuses) | No separate fusion module on the main path; `fusion_transformer.py` is the optional separate-encoder exercise |
 | Hidden dim | 576 | The language backbone's native width; all streams project to 576 |
 | Attention heads | (backbone native) | Provided by the pretrained SmolLM2-135M backbone |
 | Fusion transformer layers | n/a on main path | Backbone is the fuser; the 6-layer fusion transformer is the optional exercise only |
@@ -330,9 +330,9 @@ Same anatomy. You scaled differently.
 
 ```python
 import torch
-from ch03 import UnifiedEmbeddingBackbone
+from ch03 import VLABackbone
 
-backbone = UnifiedEmbeddingBackbone()
+backbone = VLABackbone()
 text_ids = backbone.tokenize_instruction(instruction)
 sequence_ids = torch.tensor(
     [backbone.build_sequence_ids(text_ids)], dtype=torch.long

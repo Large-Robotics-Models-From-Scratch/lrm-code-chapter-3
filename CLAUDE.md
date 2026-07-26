@@ -4,7 +4,7 @@ You are working on **Chapter 3** of "Build a Large Robot Model (From Scratch)" (
 
 ## Chapter scope
 
-This repo contains the code for **the VLA backbone**: a frozen SigLIP vision encoder + SmolLM2-135M language backbone + state encoder, fused by unified embedding. The two camera views are projected and spliced into the language backbone's own token stream, so the pretrained backbone is the fuser - there is no separate fusion transformer on the main path. Output: contextualized hidden states ready for an action head (Chapter 4 adds it).
+This repo contains the code for **the VLA backbone**: a frozen SigLIP vision encoder + SmolLM2-135M language backbone + state encoder, fused by token-level fusion. The two camera views are projected and spliced into the language backbone's own token stream, so the pretrained backbone is the fuser - there is no separate fusion transformer on the main path. Output: contextualized hidden states ready for an action head (Chapter 4 adds it).
 
 ## Locked architectural decisions (Ch 3 plan v3)
 
@@ -12,7 +12,7 @@ This repo contains the code for **the VLA backbone**: a frozen SigLIP vision enc
 |---|---|---|
 | Vision encoder | SigLIP-base/16 (frozen) | `src/ch03/vision_encoder.py` |
 | Language backbone | SmolLM2-135M (**native tokenizer; no vocab expansion**) | `src/ch03/language_backbone.py` |
-| Fusion | Unified-embedding fusion: image tokens spliced into the language backbone's stream via `masked_scatter`; the pretrained backbone fuses (no separate fusion module on the main path) | `src/ch03/vla_backbone.py` (source of truth); `fusion_transformer.py` kept only as the optional "separate-encoder fusion" exercise |
+| Fusion | Token-level fusion: image tokens spliced into the language backbone's stream via `masked_scatter`; the pretrained backbone fuses (no separate fusion module on the main path) | `src/ch03/vla_backbone.py` (source of truth); `fusion_transformer.py` kept only as the optional "separate-encoder fusion" exercise |
 | Hidden dim | 576 | The language backbone's native width; all projections target 576 |
 | Robot | SO-100 sim env (PickCubeSO100-v1); SO-101 teleop dataset (6-DOF: 5 arm + gripper) | Ch 2 hand-off |
 | Camera input | both `observation.images.up` and `observation.images.side` (two cameras, 392 image tokens = 2 x 196) | Ch 2 hand-off |
@@ -26,7 +26,7 @@ This repo contains the code for **the VLA backbone**: a frozen SigLIP vision enc
 
 > Note: the backbone grows its input embedding table by two inert placeholder rows for the image and state splice markers. This is **not** vocabulary expansion - the rows are overwritten by `masked_scatter` before the backbone runs, the tokenizer is untouched, and `config.vocab_size` stays 49152. The grown table is handed back with `set_input_embeddings`, so the model holds exactly **one** embedding table (a second, unread copy would add ~28.3M trainable parameters). Never reach for `resize_token_embeddings`: it rewrites `config.vocab_size`, which Ch 3 asserts.
 
-> Note: `UnifiedEmbeddingBackbone` **composes** `VisionEncoder` (`self.vision_encoder = VisionEncoder(hidden_dim=576)`); it does not rebuild the vision path. The frozen SigLIP, the 768->576 projection, and SigLIP's `[0,1]`->`[-1,1]` pixel normalization all live in `vision_encoder.py` only. There is no `img_proj` on the backbone.
+> Note: `VLABackbone` **composes** `VisionEncoder` (`self.vision_encoder = VisionEncoder(hidden_dim=576)`); it does not rebuild the vision path. The frozen SigLIP, the 768->576 projection, and SigLIP's `[0,1]`->`[-1,1]` pixel normalization all live in `vision_encoder.py` only. There is no `img_proj` on the backbone.
 
 ## Hand-off contracts
 
@@ -42,9 +42,9 @@ This repo contains the code for **the VLA backbone**: a frozen SigLIP vision enc
 **To Chapter 4**:
 ```python
 import torch
-from ch03 import UnifiedEmbeddingBackbone
+from ch03 import VLABackbone
 
-backbone = UnifiedEmbeddingBackbone()
+backbone = VLABackbone()
 text_ids = backbone.tokenize_instruction(instruction)  # L native SmolLM2 ids
 sequence_ids = torch.tensor(
     [backbone.build_sequence_ids(text_ids)], dtype=torch.long
@@ -79,7 +79,7 @@ Symlinked into `.claude/agents/` via the setup in `program.md` §2. See `../lrm-
 
 ## When editing code
 
-- Locked component names: `vision_encoder`, `language_backbone`, `action_head`, `fusion_transformer` - never abbreviate or rename. Note: `fusion_transformer` is a valid name but only for the optional separate-encoder fusion exercise; the main fusion is the unified-embedding splice in `vla_backbone.py`
+- Locked component names: `vision_encoder`, `language_backbone`, `action_head`, `fusion_transformer` - never abbreviate or rename. Note: `fusion_transformer` is a valid name but only for the optional separate-encoder fusion exercise; the main fusion is the token-level splice in `vla_backbone.py`
 - Banned: JAX, TensorFlow imports
 - Line length: 76 chars (55 for annotated lines)
 - Python 3.12, indent 4 spaces
