@@ -1,10 +1,10 @@
 """VLA backbone: vision, language, and state fused in one sequence.
 
 This is the chapter's deliverable and the frozen interface Chapter 4
-builds on. ``UnifiedEmbeddingBackbone`` projects the two camera views
-into the language backbone's own token stream and lets the pretrained
-attention do the fusion. There is no separate fusion transformer: the
-language backbone is the fuser.
+builds on. ``VLABackbone`` projects the two camera views into the
+language backbone's own token stream and lets the pretrained attention
+do the fusion. There is no separate fusion transformer: the language
+backbone is the fuser.
 
 The image and state tokens are spliced into reserved placeholder rows of
 the backbone's input embeddings with ``masked_scatter``. The token order
@@ -21,10 +21,10 @@ normalization all stay inside it. The grown input embedding table is
 handed back to the language backbone, so the whole model holds exactly
 one embedding table and one image projection.
 
-Do not rename ``UnifiedEmbeddingBackbone`` or change the ``forward``
-signature ``(images, sequence_ids, state)``: the ``[B, 392 + L + 1, 576]``
-output is the contract Chapter 4 reads from. ``sequence_ids`` is OUR
-fused layout (image + text + state); it is distinct from Hugging Face's
+Do not rename ``VLABackbone`` or change the ``forward`` signature
+``(images, sequence_ids, state)``: the ``[B, 392 + L + 1, 576]`` output
+is the contract Chapter 4 reads from. ``sequence_ids`` is OUR fused
+layout (image + text + state); it is distinct from Hugging Face's
 ``input_ids``, which stay the tokenizer/model API name unchanged.
 """
 
@@ -52,7 +52,7 @@ DEFAULT_IMAGE_ID = SMOLLM_VOCAB
 DEFAULT_STATE_ID = SMOLLM_VOCAB + 1
 
 
-class UnifiedEmbeddingBackbone(nn.Module):
+class VLABackbone(nn.Module):
     """Fuse vision, language, and state in the backbone's own stream."""
 
     def __init__(
@@ -80,7 +80,7 @@ class UnifiedEmbeddingBackbone(nn.Module):
         # normalization all live inside it, so the backbone owns no
         # second copy of any of them.
         self.vision_encoder = VisionEncoder(hidden_dim=SMOLLM_WIDTH)
-        self.state_proj = StateEncoder(6, SMOLLM_WIDTH)
+        self.state_encoder = StateEncoder(6, SMOLLM_WIDTH)
         self.tokenizer = AutoTokenizer.from_pretrained(SMOLLM_MODEL)
         self.language_backbone = AutoModel.from_pretrained(SMOLLM_MODEL)
         # Grow the input embedding table just far enough that both
@@ -174,7 +174,7 @@ class UnifiedEmbeddingBackbone(nn.Module):
         )  # [B, 392, 576] cam0 then cam1
         emb = self.embed_tokens(sequence_ids)  # [B, N, 576]
         img = img.to(emb.dtype)
-        state_tok = self.state_proj(state).to(emb.dtype)
+        state_tok = self.state_encoder(state).to(emb.dtype)
         img_mask = (sequence_ids == self.image_id).unsqueeze(-1)
         st_mask = (sequence_ids == self.state_id).unsqueeze(-1)
         # Guard the splice (repo hardening; the book listing omits

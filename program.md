@@ -85,10 +85,10 @@ For each of the 7 listings in `docs/chapter_3_plan.md`, in order:
 
 ## 4. The Export Contract
 
-`UnifiedEmbeddingBackbone.forward(images, sequence_ids, state) -> [B, 392 + L + 1, 576]` is the **frozen interface** between Ch 3 and Ch 4. Signature specified in `docs/chapter_3_plan.md` "Hand-off contract to chapter 4" and in `ARCHITECTURE_LOG.md`.
+`VLABackbone.forward(images, sequence_ids, state) -> [B, 392 + L + 1, 576]` is the **frozen interface** between Ch 3 and Ch 4. Signature specified in `docs/chapter_3_plan.md` "Hand-off contract to chapter 4" and in `ARCHITECTURE_LOG.md`.
 
 **Implications:**
-- Do not rename `UnifiedEmbeddingBackbone` or change the forward signature. `sequence_ids` is OUR fused layout; HF's `input_ids` (tokenizer/model API) is a different name and stays unchanged. **Ch 4's repo must adopt `build_sequence_ids` / `sequence_ids`.**
+- Do not rename `VLABackbone` or change the forward signature. `sequence_ids` is OUR fused layout; HF's `input_ids` (tokenizer/model API) is a different name and stays unchanged. **Ch 4's repo must adopt `build_sequence_ids` / `sequence_ids`.**
 - `images` is `[B, 2, 3, 224, 224]` (two cameras); `sequence_ids` comes from `build_sequence_ids(text_ids)` (image + text + state order, length `N = 392 + L + 1`); `state` is `[B, 6]`.
 - The output tensor shape is part of the contract - Ch 4 reads the rightmost K positions.
 - The tokenizer is SmolLM2's native (49,152 vocab) - vocab expansion belongs to Ch 4. The backbone grows its input embeddings by two inert splice-marker rows, which leaves `config.vocab_size` at 49,152.
@@ -142,7 +142,7 @@ The chapter is done when:
 
 - **One listing at a time.** Don't write three files in parallel.
 - **Update the plan when reality diverges.** Code-first, plan-after creates silent drift.
-- **Cross-reference the export contract before any rename.** Ch 4's plan locks the `UnifiedEmbeddingBackbone` symbol.
+- **Cross-reference the export contract before any rename.** Ch 4's plan locks the `VLABackbone` symbol.
 - **Don't pre-emptively optimize.** Chapter 3 is the simplest backbone that works on a laptop.
 - **Notebook is not a dumping ground.** Anything more than ~10 lines belongs in `src/ch03/`.
 - **Clear notebook outputs before committing** (pre-commit hook does this via nbstripout).

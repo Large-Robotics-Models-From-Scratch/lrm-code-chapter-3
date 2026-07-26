@@ -35,7 +35,7 @@ vision-language-action backbone: a network that takes two camera views,
 an instruction, and the robot's joint state, and produces a fused
 sequence of hidden states ready for an action head (Chapter 4).
 
-Fusion here is *unified embedding*. The two camera views and the state
+Fusion here is *token-level fusion*. The two camera views and the state
 are projected and spliced into the language backbone's own token stream
 with ``masked_scatter``, so the pretrained backbone is the fuser: there
 is no separate fusion module on the main path. The output is
@@ -191,7 +191,7 @@ md("""
 """)
 
 md("""
-### Listing 3.5 Building the unified-embedding backbone
+### Listing 3.5 Composing the VLABackbone
 
 The backbone composes what you already built. Its vision path is the
 ``VisionEncoder`` from listing 3.1, used unchanged, so the frozen SigLIP,
@@ -215,9 +215,9 @@ assemble them into OUR ``sequence_ids``. (Full source:
 """)
 
 code("""
-from ch03 import UnifiedEmbeddingBackbone
+from ch03 import VLABackbone
 
-backbone = UnifiedEmbeddingBackbone().eval()
+backbone = VLABackbone().eval()
 
 text_ids = backbone.tokenize_instruction(instruction)
 sequence_ids = backbone.build_sequence_ids(text_ids)
@@ -228,7 +228,7 @@ print("vocab size unchanged:",
 """)
 
 md("""
-### Listing 3.6 The unified-embedding forward pass
+### Listing 3.6 The token-level fusion forward pass
 
 ``forward(images, sequence_ids, state)`` runs the vision encoder once on
 both camera views (it returns 576-wide tokens already, since the
@@ -319,8 +319,8 @@ md("""
 The main path lets the pretrained backbone fuse the streams. The optional
 ``FusionTransformer`` is the named alternative: a from-scratch stack of
 pre-norm causal self-attention blocks that you bolt onto the frozen
-streams and compare against unified-embedding fusion. It is not on the
-main path and is not imported by ``UnifiedEmbeddingBackbone``. (Source:
+streams and compare against token-level fusion. It is not on the
+main path and is not imported by ``VLABackbone``. (Source:
 ``src/ch03/fusion_transformer.py``.)
 """)
 
@@ -337,7 +337,7 @@ md("""
 
 You built a VLA backbone from pre-trained parts: a frozen SigLIP vision
 encoder, a trainable SmolLM2-135M language backbone, and a state encoder,
-fused by unified embedding. The two camera views and the state are
+fused by token-level fusion. The two camera views and the state are
 spliced into the backbone's own token stream with ``masked_scatter``, so
 the pretrained backbone is the fuser; there is no separate fusion module
 on the main path. The backbone maps two images, an instruction, and the

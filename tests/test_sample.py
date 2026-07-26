@@ -8,7 +8,7 @@ integration like the rest of the backbone suite.
 import pytest
 import torch
 
-from ch03 import UnifiedEmbeddingBackbone, load_sample, preprocess_image
+from ch03 import VLABackbone, load_sample, preprocess_image
 from ch03.vla_backbone import IMAGE_TOKENS, SMOLLM_WIDTH
 
 INSTRUCTION = "pink lego brick into the transparent box"
@@ -43,7 +43,7 @@ def test_backbone_runs_on_the_real_sample():
     # The whole point of shipping the sample: the chapter's final
     # contract check runs on real data instead of torch.rand.
     images, state, instruction = load_sample()
-    backbone = UnifiedEmbeddingBackbone().eval()
+    backbone = VLABackbone().eval()
     text_ids = backbone.tokenize_instruction(instruction)
     sequence_ids = torch.tensor([backbone.build_sequence_ids(text_ids)])
     with torch.no_grad():

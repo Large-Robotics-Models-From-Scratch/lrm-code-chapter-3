@@ -1,4 +1,4 @@
-"""Tests for UnifiedEmbeddingBackbone.
+"""Tests for VLABackbone.
 
 Marked integration (downloads SigLIP and SmolLM2).
 """
@@ -6,7 +6,7 @@ Marked integration (downloads SigLIP and SmolLM2).
 import pytest
 import torch
 
-from ch03 import UnifiedEmbeddingBackbone
+from ch03 import VLABackbone
 from ch03.vision_encoder import NUM_PATCHES, VisionEncoder
 from ch03.vla_backbone import IMAGE_TOKENS, SMOLLM_VOCAB, SMOLLM_WIDTH
 
@@ -18,7 +18,7 @@ MAX_TRAINABLE_PARAMS = 140_000_000
 
 @pytest.fixture(scope="module")
 def backbone():
-    return UnifiedEmbeddingBackbone().eval()
+    return VLABackbone().eval()
 
 
 def _two_camera_batch(batch_size: int) -> torch.Tensor:
@@ -116,7 +116,7 @@ def test_splice_puts_every_vector_at_the_right_position(backbone):
             )
             # The last position is this row's state token, not the other
             # row's.
-            state_token = backbone.state_proj(state[b].unsqueeze(0))[0]
+            state_token = backbone.state_encoder(state[b].unsqueeze(0))[0]
             torch.testing.assert_close(
                 spliced[b, -1], state_token, atol=1e-5, rtol=1e-5
             )
@@ -225,7 +225,7 @@ def test_grown_table_keeps_the_source_dtype():
     # Transformers releases load SmolLM2 in bfloat16, and a float32
     # table would then blow up inside forward on a dtype mismatch.
     source = torch.nn.Embedding(8, 4, dtype=torch.bfloat16)
-    grown = UnifiedEmbeddingBackbone._grow_embeddings(source, 10)
+    grown = VLABackbone._grow_embeddings(source, 10)
     assert grown.num_embeddings == 10
     assert grown.weight.dtype == torch.bfloat16
     assert grown.weight.device == source.weight.device
