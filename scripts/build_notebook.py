@@ -56,11 +56,14 @@ ORG = "https://github.com/Large-Robotics-Models-From-Scratch"
 if "google.colab" in sys.modules:
     !pip install -q "lrm-ch03 @ git+{ORG}/lrm-code-chapter-3.git"
 
-# Chapter 2's data pipeline (real SO-100 frames) is optional here and
-# currently cannot install alongside Chapter 3: lerobot 0.5.1 pins
-# huggingface-hub>=1.0 while transformers pins <1.0. Until those are
-# reconciled the next cell falls back to synthetic frames. To use real
-# data once the pins are fixed, add:
+# Chapter 2's data pipeline (real SO-101 frames) is optional here, and it
+# does not install alongside Chapter 3 under this repo's pins: lerobot
+# 0.5.1 requires huggingface-hub>=1.0,<2.0 while transformers <5.0
+# requires huggingface-hub<1.0. So the next cell falls back to synthetic
+# frames. Real frames DO work if you relax the transformers pin to allow
+# 5.x (pip then resolves lerobot 0.5.1 + transformers 5.x +
+# huggingface-hub 1.x) and have a system FFmpeg for torchcodec, or no
+# torchcodec at all so lerobot falls back to its bundled pyav decoder:
 #   !pip install -q "lrm-ch02[data] @ git+{ORG}/lrm-code-chapter-2.git"
 """)
 
@@ -194,13 +197,17 @@ md("""
 md("""
 ### Listing 3.5 Building the unified-embedding backbone
 
-The backbone owns the three projections (a frozen SigLIP, a 768 to 576
-image projection, and the state encoder) plus the SmolLM2-135M backbone
+The backbone composes what you already built. Its vision path is the
+``VisionEncoder`` from listing 3.1, used unchanged, so the frozen SigLIP,
+the 768 to 576 projection, and SigLIP's pixel normalization stay in one
+place; alongside it sit the state encoder and the SmolLM2-135M backbone
 itself. It also grows the input embedding table by two inert rows so two
 placeholder ids, one for image patches and one for the state, index
-validly. Those rows are overwritten by the splice before the backbone
-runs, so this is not Chapter 4's vocabulary expansion: the tokenizer is
-untouched and ``config.vocab_size`` stays 49,152.
+validly, then hands that grown table back to the language backbone so the
+model holds exactly one embedding table. Those rows are overwritten by the
+splice before the backbone runs, so this is not Chapter 4's vocabulary
+expansion: the tokenizer is untouched and ``config.vocab_size`` stays
+49,152.
 
 ``build_sequence_ids`` templates one row in the order
 ``[image (392), text (L), state (1)]``: 392 image placeholder ids (196
@@ -227,8 +234,9 @@ print("vocab size unchanged:",
 md("""
 ### Listing 3.6 The unified-embedding forward pass
 
-``forward(images, sequence_ids, state)`` encodes the two camera views,
-projects them to 576, looks up the template's embeddings, and uses
+``forward(images, sequence_ids, state)`` runs the vision encoder once on
+both camera views (it returns 576-wide tokens already, since the
+projection lives inside it), looks up the template's embeddings, and uses
 ``masked_scatter`` to drop the 392 image tokens and the 1 state token
 into their reserved placeholder slots. The pretrained SmolLM2 attention
 then fuses everything in one pass. The output ``[B, 392 + L + 1, 576]``
@@ -248,18 +256,38 @@ md("""
 ### Listing 3.7 Instantiate, run one batch, check the contract
 
 Before handing the backbone to Chapter 4, check the contract holds: the
-output sequence is ``392 + L + 1`` long and 576 wide, the language stream
-survives the splice unchanged, and the tokenizer was never expanded
-(``config.vocab_size`` is still 49,152). These are the same invariants
-the ``tests/`` suite asserts.
+output sequence is ``392 + L + 1`` long and 576 wide, the tokenizer was
+never expanded (``config.vocab_size`` is still 49,152), the vision path is
+the composed ``VisionEncoder`` rather than a second copy of it, and the
+model carries one embedding table, not two. That last one is only visible
+in the parameter count: a duplicate table adds 28,311,552 trainable
+parameters (49,152 x 576) that the forward pass never reads. These are the
+same invariants the ``tests/`` suite asserts.
 """)
 
 code("""
+from ch03 import VisionEncoder
+
 B, N, width = hidden.shape
 assert N == 392 + L + 1, (N, L)
 assert width == 576, width
 assert backbone.language_backbone.config.vocab_size == 49152
+
+# The vision path is section 3.2's encoder, composed, not rebuilt.
+assert isinstance(backbone.vision_encoder, VisionEncoder)
+assert not hasattr(backbone, "img_proj")
+
+# Exactly one embedding table.
+assert backbone.language_backbone.get_input_embeddings() is \\
+    backbone.embed_tokens
+
+trainable = sum(p.numel() for p in backbone.parameters()
+                if p.requires_grad)
+frozen = sum(p.numel() for p in backbone.parameters()
+             if not p.requires_grad)
+assert trainable < 140_000_000, trainable
 print("contract OK:", (B, N, width), "| vocab still 49152")
+print(f"trainable: {trainable:,} | frozen: {frozen:,}")
 """)
 
 md("""

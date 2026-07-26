@@ -171,6 +171,11 @@ Causal self-attention via upper-triangular mask. Pre-norm.
 
 Fusion is a unified-embedding splice: image and state tokens are written into the language backbone's own input-embedding stream via `masked_scatter`, so the pretrained backbone is the fuser (no separate fusion module on the main path). The backbone grows its input embedding table by two inert placeholder rows for the image and state splice markers - this is NOT `resize_token_embeddings`; the tokenizer is untouched and `config.vocab_size` stays 49152.
 
+Two things the backbone deliberately does NOT own, because owning them once is the point:
+
+- **The vision path.** `self.vision_encoder = VisionEncoder(hidden_dim=576)` composes listing 3.1's encoder as-is. Frozen SigLIP, the 768->576 projection, and the `[0,1]`->`[-1,1]` pixel normalization buffers all live in `vision_encoder.py`. `forward` calls it once and gets `[B*2, 196, 576]` back already projected, so there is no `img_proj` on the backbone.
+- **A second embedding table.** After growing the table, `self.language_backbone.set_input_embeddings(self.embed_tokens)` hands it back, so the model holds one table. Keeping the language backbone's original alongside it would add 28,311,552 trainable parameters (49,152 x 576) that `forward` never reads, because it passes `inputs_embeds`. Measured: 135,295,488 trainable / 92,884,224 frozen. `tests/test_vla_backbone.py` guards both with an identity check and a `< 140_000_000` trainable budget.
+
 ```python
 class UnifiedEmbeddingBackbone(nn.Module):
     def __init__(self) -> None: ...   # hidden width 576 (backbone native)

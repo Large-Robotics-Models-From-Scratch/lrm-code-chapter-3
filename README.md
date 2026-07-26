@@ -16,6 +16,8 @@ state  ──▶  StateEncoder (MLP)                     ──▶  [B,  1,  576
                     [B, 392+L+1, 576]
 ```
 
+The backbone composes those three modules rather than rebuilding them. `VisionEncoder` is used as-is, so the frozen SigLIP, the 768->576 projection, and SigLIP's `[0,1]`->`[-1,1]` pixel normalization exist in exactly one place, and the grown input embedding table is handed back to the language backbone so the model carries one embedding table (135,295,488 trainable / 92,884,224 frozen parameters).
+
 Plus a **patch self-similarity visualization** that shows the frozen vision encoder localizes objects before any action head is attached - diagnostic only, no training.
 
 ## Locked architecture (Ch 3 plan v5)

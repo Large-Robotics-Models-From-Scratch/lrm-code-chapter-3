@@ -24,7 +24,9 @@ This repo contains the code for **the VLA backbone**: a frozen SigLIP vision enc
 - Action token reservation (256 bins × 6 dims = 1,536 IDs)
 - Action head + autoregressive prediction loop
 
-> Note: the backbone grows its input embedding table by two inert placeholder rows for the image and state splice markers. This is **not** vocabulary expansion - the rows are overwritten by `masked_scatter` before the backbone runs, the tokenizer is untouched, and `config.vocab_size` stays 49152.
+> Note: the backbone grows its input embedding table by two inert placeholder rows for the image and state splice markers. This is **not** vocabulary expansion - the rows are overwritten by `masked_scatter` before the backbone runs, the tokenizer is untouched, and `config.vocab_size` stays 49152. The grown table is handed back with `set_input_embeddings`, so the model holds exactly **one** embedding table (a second, unread copy would add ~28.3M trainable parameters). Never reach for `resize_token_embeddings`: it rewrites `config.vocab_size`, which Ch 3 asserts.
+
+> Note: `UnifiedEmbeddingBackbone` **composes** `VisionEncoder` (`self.vision_encoder = VisionEncoder(hidden_dim=576)`); it does not rebuild the vision path. The frozen SigLIP, the 768->576 projection, and SigLIP's `[0,1]`->`[-1,1]` pixel normalization all live in `vision_encoder.py` only. There is no `img_proj` on the backbone.
 
 ## Hand-off contracts
 

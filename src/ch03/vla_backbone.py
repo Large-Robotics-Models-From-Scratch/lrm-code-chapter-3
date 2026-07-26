@@ -14,6 +14,13 @@ the template builds is
 
 so the contract Chapter 4 reads is ``[B, 392 + L + 1, 576]``.
 
+The backbone composes rather than rebuilds. The vision path is the
+``VisionEncoder`` of section 3.2, used as-is: frozen SigLIP, the 768 to
+576 projection, and SigLIP's ``[0, 1]`` to ``[-1, 1]`` pixel
+normalization all stay inside it. The grown input embedding table is
+handed back to the language backbone, so the whole model holds exactly
+one embedding table and one image projection.
+
 Do not rename ``UnifiedEmbeddingBackbone`` or change the ``forward``
 signature ``(images, sequence_ids, state)``: the ``[B, 392 + L + 1, 576]``
 output is the contract Chapter 4 reads from. ``sequence_ids`` is OUR
@@ -25,15 +32,14 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-from transformers import AutoModel, AutoTokenizer, SiglipVisionModel
+from transformers import AutoModel, AutoTokenizer
 
 from ch03.state_encoder import StateEncoder
-from ch03.vision_encoder import NUM_PATCHES, SIGLIP_MODEL
+from ch03.vision_encoder import NUM_PATCHES, VisionEncoder
 
 SMOLLM_MODEL = "HuggingFaceTB/SmolLM2-135M"
 SMOLLM_VOCAB = 49152  # SmolLM2 native vocabulary
 SMOLLM_WIDTH = 576
-SIGLIP_WIDTH = 768
 NUM_CAMERAS = 2
 IMAGE_TOKENS = NUM_CAMERAS * NUM_PATCHES  # 392 = 2 x 196
 
@@ -44,47 +50,6 @@ IMAGE_TOKENS = NUM_CAMERAS * NUM_PATCHES  # 392 = 2 x 196
 # tokens.
 DEFAULT_IMAGE_ID = SMOLLM_VOCAB
 DEFAULT_STATE_ID = SMOLLM_VOCAB + 1
-
-
-class FrozenSiglipFeatures(nn.Module):
-    """Frozen SigLIP that returns raw ``[B, 196, 768]`` patch features.
-
-    Same frozen SigLIP as the ``VisionEncoder`` of section 3.2, but
-    without the 768 to 576 projection: that projection lives once in the
-    backbone's ``img_proj``, with the consumer, not here. SigLIP expects
-    pixels in ``[-1, 1]``; the buffers keep that detail inside the module
-    so callers keep passing ``[0, 1]`` frames.
-    """
-
-    def __init__(self, model_name: str = SIGLIP_MODEL) -> None:
-        super().__init__()
-        self.siglip = SiglipVisionModel.from_pretrained(model_name)
-        self.siglip.eval()
-        for param in self.siglip.parameters():
-            param.requires_grad = False
-        self.register_buffer("pixel_mean", torch.tensor(0.5))
-        self.register_buffer("pixel_std", torch.tensor(0.5))
-
-    def train(self, mode: bool = True) -> "FrozenSiglipFeatures":
-        super().train(mode)
-        self.siglip.eval()  # frozen: never toggle out of eval
-        return self
-
-    def forward(self, images: torch.Tensor) -> torch.Tensor:
-        pixels = (images - self.pixel_mean) / self.pixel_std
-        return self.siglip(pixel_values=pixels).last_hidden_state
-
-
-def load_siglip(model_name: str = SIGLIP_MODEL) -> nn.Module:
-    """Return the frozen SigLIP feature extractor (768-dim patches).
-
-    Same frozen SigLIP as listing 3.1, but without the 768 to 576
-    projection: it takes ``[0, 1]`` frames (normalization handled
-    inside) and returns their ``[B, 196, 768]`` patch features. The
-    projection lives once in the backbone's ``img_proj``, with the
-    consumer, so this is the bare feature extractor it consumes.
-    """
-    return FrozenSiglipFeatures(model_name)
 
 
 class UnifiedEmbeddingBackbone(nn.Module):
@@ -110,8 +75,11 @@ class UnifiedEmbeddingBackbone(nn.Module):
             )
         self.image_id = image_id
         self.state_id = state_id
-        self.vision_encoder = load_siglip()  # frozen, 768-dim
-        self.img_proj = nn.Linear(SIGLIP_WIDTH, SMOLLM_WIDTH)  # 768 -> 576
+        # Listing 3.1's encoder, reused verbatim: frozen SigLIP, the
+        # 768 to 576 projection, and SigLIP's [0,1] -> [-1,1] pixel
+        # normalization all live inside it, so the backbone owns no
+        # second copy of any of them.
+        self.vision_encoder = VisionEncoder(hidden_dim=SMOLLM_WIDTH)
         self.state_proj = StateEncoder(6, SMOLLM_WIDTH)
         self.tokenizer = AutoTokenizer.from_pretrained(SMOLLM_MODEL)
         self.language_backbone = AutoModel.from_pretrained(SMOLLM_MODEL)
@@ -124,6 +92,15 @@ class UnifiedEmbeddingBackbone(nn.Module):
             self.language_backbone.get_input_embeddings(),
             max(image_id, state_id) + 1,
         )
+        # Hand the grown table back so the model holds exactly ONE
+        # embedding table. Without this the language backbone would keep
+        # its original table as well, ~28M trainable parameters that
+        # forward never reads (it passes inputs_embeds). Swapping the
+        # table in directly, rather than through Hugging Face's
+        # token-resize helper, is what keeps config.vocab_size at 49152:
+        # the resize helper rewrites the config, and that number is a
+        # Chapter 3 invariant.
+        self.language_backbone.set_input_embeddings(self.embed_tokens)
 
     @staticmethod
     def _grow_embeddings(
@@ -178,10 +155,10 @@ class UnifiedEmbeddingBackbone(nn.Module):
         ``[B, 392 + L + 1, 576]`` hidden states.
         """
         B = images.shape[0]
-        siglip_features = self.vision_encoder(
+        patches = self.vision_encoder(
             images.flatten(0, 1)
-        )  # [B*2, 196, 768]
-        img = self.img_proj(siglip_features).reshape(
+        )  # [B*2, 196, 576] frozen SigLIP, already projected
+        img = patches.reshape(
             B, -1, SMOLLM_WIDTH
         )  # [B, 392, 576] cam0 then cam1
         emb = self.embed_tokens(sequence_ids)  # [B, N, 576]
