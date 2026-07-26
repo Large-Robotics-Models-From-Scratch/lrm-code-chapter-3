@@ -12,6 +12,7 @@ it import it directly with
 
 from ch03.language_backbone import LanguageBackbone
 from ch03.preprocess import preprocess_image
+from ch03.sample import load_sample
 from ch03.state_encoder import StateEncoder
 from ch03.vision_encoder import VisionEncoder
 from ch03.vla_backbone import UnifiedEmbeddingBackbone
@@ -22,4 +23,5 @@ __all__ = [
     "LanguageBackbone",
     "StateEncoder",
     "preprocess_image",
+    "load_sample",
 ]

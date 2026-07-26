@@ -37,6 +37,8 @@ This repo contains the code for **the VLA backbone**: a frozen SigLIP vision enc
 - `action: (B, 6) float32` z-scored — Ch 3 doesn't predict actions, just hands hidden states to Ch 4
 - `task: list[str]` — the instruction, fed to the language backbone
 
+> **Real sample shipped in-repo:** Chapter 2's loader does not install alongside Chapter 3 (lerobot 0.5.1 wants huggingface-hub>=1.0, transformers<5.0 wants <1.0) and video decode needs FFmpeg, so one real timestep travels with the package: `from ch03 import load_sample` returns `(images [1, 2, 3, 480, 640] float32 in [0,1], state [1, 6] float32, instruction)`, backed by lossless PNGs in `src/ch03/assets/`. Use it instead of `torch.rand` in listings, notebooks, and demos. The dataset's real task string is `"pink lego brick into the transparent box"` - do not paraphrase it.
+
 **To Chapter 4**:
 ```python
 import torch
@@ -81,7 +83,7 @@ Symlinked into `.claude/agents/` via the setup in `program.md` §2. See `../lrm-
 - Banned: JAX, TensorFlow imports
 - Line length: 76 chars (55 for annotated lines)
 - Python 3.12, indent 4 spaces
-- Tests must include shape and dtype assertions
+- Tests must include shape and dtype assertions. For the fused sequence, shapes are not enough: `tests/test_vla_backbone.py::test_splice_puts_every_vector_at_the_right_position` pins which vector lands at which position (a swapped camera or an interleaving reshape keeps every shape correct), so keep that test green rather than relaxing it
 - Save the tokenizer alongside the model if you persist anything (we use native SmolLM tokenizer; no expansion)
 
 ## When writing prose for the book chapter

@@ -46,6 +46,11 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# The one real Chapter 2 sample (two camera PNGs + state/instruction)
+# ships inside the package so load_sample() works from a pip install.
+[tool.setuptools.package-data]
+ch03 = ["assets/*.png", "assets/*.json"]
+
 [tool.ruff]
 line-length = 76
 target-version = "py312"

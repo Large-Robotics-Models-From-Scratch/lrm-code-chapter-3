@@ -1,0 +1,17 @@
+{
+  "instruction": "pink lego brick into the transparent box",
+  "state": [
+    -0.13555187478240852,
+    -1.1829075174399244,
+    1.1602266246972184,
+    0.4278231379770631,
+    0.11217820954544488,
+    -0.7975099204163959
+  ],
+  "state_dim": 6,
+  "cameras": [
+    "observation.images.up",
+    "observation.images.side"
+  ],
+  "dataset": "lerobot/svla_so101_pickplace"
+}

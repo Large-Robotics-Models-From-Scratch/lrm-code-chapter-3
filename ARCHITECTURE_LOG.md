@@ -39,6 +39,14 @@ Measured effect on `UnifiedEmbeddingBackbone()`:
 
 The 28,311,552 trainable parameters removed are exactly one SmolLM2 embedding table (49,152 x 576). `config.vocab_size` stays 49,152 and the `[B, 392 + L + 1, 576]` contract is unchanged.
 
+### Update (2026-07): real sample, position-level splice test, dtype-safe table growth
+
+Three follow-ups, none of which change the architecture or the Ch 4 contract.
+
+1. **One real Chapter 2 sample ships in the package.** `src/ch03/assets/` holds the two camera views of one `lerobot/svla_so101_pickplace` timestep as lossless PNGs (uint8, so `/255` reproduces the dataloader's float32 frames exactly) plus the z-scored state and the episode's task string. `from ch03 import load_sample` returns `(images [1, 2, 3, 480, 640] float32 in [0,1], state [1, 6] float32, instruction)`. The dataset stores state as float64; `load_sample` casts it. The real task string is `"pink lego brick into the transparent box"` (not the paraphrase earlier drafts used). The notebook now runs every listing on this sample: no `torch.rand`, no dataloader, no video decoder, no network. Measured on it: L = 9, output `[1, 402, 576]`.
+2. **The splice is tested position by position.** Every earlier test asserted shapes, counts, and template order, all of which stay correct under a swapped camera, a transposed reshape, or interleaved batch rows. `test_splice_puts_every_vector_at_the_right_position` captures `inputs_embeds` with a forward pre-hook on the language backbone, then checks, for a batch of 2 with four distinct frames, that positions 0..195 are camera 0, 196..391 are camera 1, the next L are the embedding-table rows for the text ids, and the last is that row's state token. Verified to fail on both a camera swap and a batch-interleaving reshape.
+3. **`_grow_embeddings` inherits the source table's dtype and device.** `nn.Embedding` defaults to float32; under transformers 5 SmolLM2 loads in bfloat16 and `forward` died with a dtype mismatch. No-op under this repo's `transformers<5` pin (parameter counts and all existing tests unchanged), so readers with a fresh install are covered either way.
+
 The rows below predate this update and describe the superseded v3 design; retained for history.
 
 ## Locked decisions inherited from earlier chapters
