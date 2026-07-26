@@ -116,7 +116,7 @@ def test_splice_puts_every_vector_at_the_right_position(backbone):
             )
             # The last position is this row's state token, not the other
             # row's.
-            state_token = backbone.state_proj(state[b].unsqueeze(0))[0]
+            state_token = backbone.state_encoder(state[b].unsqueeze(0))[0]
             torch.testing.assert_close(
                 spliced[b, -1], state_token, atol=1e-5, rtol=1e-5
             )

@@ -80,7 +80,7 @@ class VLABackbone(nn.Module):
         # normalization all live inside it, so the backbone owns no
         # second copy of any of them.
         self.vision_encoder = VisionEncoder(hidden_dim=SMOLLM_WIDTH)
-        self.state_proj = StateEncoder(6, SMOLLM_WIDTH)
+        self.state_encoder = StateEncoder(6, SMOLLM_WIDTH)
         self.tokenizer = AutoTokenizer.from_pretrained(SMOLLM_MODEL)
         self.language_backbone = AutoModel.from_pretrained(SMOLLM_MODEL)
         # Grow the input embedding table just far enough that both
@@ -174,7 +174,7 @@ class VLABackbone(nn.Module):
         )  # [B, 392, 576] cam0 then cam1
         emb = self.embed_tokens(sequence_ids)  # [B, N, 576]
         img = img.to(emb.dtype)
-        state_tok = self.state_proj(state).to(emb.dtype)
+        state_tok = self.state_encoder(state).to(emb.dtype)
         img_mask = (sequence_ids == self.image_id).unsqueeze(-1)
         st_mask = (sequence_ids == self.state_id).unsqueeze(-1)
         # Guard the splice (repo hardening; the book listing omits
