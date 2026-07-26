@@ -14,11 +14,30 @@ The backbone is now `UnifiedEmbeddingBackbone` (was `VLABackbone` / "deep fusion
 | Cameras | `up` only, 196 image tokens | `up` + `side`, 392 image tokens (cam0 then cam1) |
 | Token order | `[image (196), lang (L), state (1)]` | `[image (392), lang (L), state (1)]` |
 | Fuser | from-scratch `FusionTransformer` | the pretrained language backbone itself |
-| Vision projection | inside `VisionEncoder` (768->512) | `img_proj` inside the backbone (768->576) over raw frozen SigLIP |
+| Vision projection | inside `VisionEncoder` (768->512) | inside `VisionEncoder` (768->576); the backbone composes that encoder rather than rebuilding the vision path |
 | Output contract | `[B, 196 + L + 1, 512]` | `[B, 392 + L + 1, 576]` |
 | `fusion_transformer.py` | main path | optional exercise 3.4 (separate-encoder fusion); not imported by the main path |
 
 The two placeholder ids (image, state) index two inert rows grown onto the input embedding table; they are spliced over before the backbone runs, so this is NOT the Chapter 4 vocabulary expansion (`resize_token_embeddings` / `add_tokens` stay Chapter 4's first step, still forbidden in Ch 3 source).
+
+### Update (2026-07): compose, don't duplicate
+
+Two reviewer-found duplications are gone. Both were invisible in the output shape, which is why the shape tests passed either way.
+
+| Was | Now |
+|---|---|
+| The backbone built its own vision path: a bare frozen SigLIP wrapper (`load_siglip` / `FrozenSiglipFeatures`) plus a second `img_proj` 768->576 linear | The backbone composes `VisionEncoder` unchanged (`self.vision_encoder = VisionEncoder(hidden_dim=576)`); frozen SigLIP, the 768->576 projection, and SigLIP's `[0,1]`->`[-1,1]` pixel normalization all live in one place. `load_siglip` and `FrozenSiglipFeatures` are retired |
+| Two embedding tables: the grown `self.embed_tokens` plus the language backbone's original table, both trainable, the original never read because `forward` passes `inputs_embeds` | One table: `self.language_backbone.set_input_embeddings(self.embed_tokens)` hands the grown table back. Deliberately not `resize_token_embeddings`, which would rewrite `config.vocab_size` |
+
+Measured effect on `UnifiedEmbeddingBackbone()`:
+
+| | Before | After |
+|---|---|---|
+| Trainable params | 163,607,040 | 135,295,488 |
+| Frozen params | 92,884,224 | 92,884,224 |
+| Total params | 256,491,264 | 228,179,712 |
+
+The 28,311,552 trainable parameters removed are exactly one SmolLM2 embedding table (49,152 x 576). `config.vocab_size` stays 49,152 and the `[B, 392 + L + 1, 576]` contract is unchanged.
 
 The rows below predate this update and describe the superseded v3 design; retained for history.
 
