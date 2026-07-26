@@ -20,6 +20,17 @@ The backbone composes those three modules rather than rebuilding them. `VisionEn
 
 Plus a **patch self-similarity visualization** that shows the frozen vision encoder localizes objects before any action head is attached - diagnostic only, no training.
 
+One **real sample** from the Chapter 2 dataset (`lerobot/svla_so101_pickplace`) ships inside the package, so every listing and the notebook run on real data rather than `torch.rand` noise, with no dataloader, video decoder, or network access required:
+
+```python
+from ch03 import load_sample
+
+images, state, instruction = load_sample()
+# images: [1, 2, 3, 480, 640] float32 in [0, 1]   both camera views, native resolution
+# state:  [1, 6] float32                          z-scored SO-101 state
+# instruction: "pink lego brick into the transparent box"
+```
+
 ## Locked architecture (Ch 3 plan v5)
 
 | Component | Choice |
@@ -92,7 +103,9 @@ lrm-code-chapter-3/
 │   ├── vla_backbone.py             # PR 5 — UnifiedEmbeddingBackbone, composes the above
 │   ├── viz_attention.py            # PR 2 — attention rollout
 │   ├── viz_prompted_attention.py   # PR 6 — 3-prompt attention grid
-│   └── preprocess.py               # PR 5 — image preprocessing
+│   ├── preprocess.py               # PR 5 — image preprocessing
+│   ├── sample.py                   # load_sample() — one real Ch 2 sample
+│   └── assets/                     # frame_up.png, frame_side.png, sample.json
 ├── notebooks/
 │   └── ch03.ipynb                  # Reader's canonical walkthrough
 ├── agents/
@@ -112,6 +125,7 @@ lrm-code-chapter-3/
 │   ├── test_language_backbone.py
 │   ├── test_state_encoder.py
 │   ├── test_fusion_transformer.py
+│   ├── test_sample.py
 │   └── test_vla_backbone.py
 └── figures/                        # Rendered figures (figure_3_*.png)
 ```

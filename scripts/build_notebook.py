@@ -43,7 +43,9 @@ is no separate fusion module on the main path. The output is
 
 The full annotated source of every listing is in ``src/ch03/`` and in the
 book prose. This notebook installs the package, then constructs and runs
-each component on a real frame from the Chapter 2 dataset.
+each component on a real sample from the Chapter 2 dataset: two camera
+views, the instruction, and the joint state of one recorded timestep,
+which ship inside the package so nothing here runs on random noise.
 """)
 
 code("""
@@ -56,52 +58,45 @@ ORG = "https://github.com/Large-Robotics-Models-From-Scratch"
 if "google.colab" in sys.modules:
     !pip install -q "lrm-ch03 @ git+{ORG}/lrm-code-chapter-3.git"
 
-# Chapter 2's data pipeline (real SO-101 frames) is optional here, and it
-# does not install alongside Chapter 3 under this repo's pins: lerobot
-# 0.5.1 requires huggingface-hub>=1.0,<2.0 while transformers <5.0
-# requires huggingface-hub<1.0. So the next cell falls back to synthetic
-# frames. Real frames DO work if you relax the transformers pin to allow
-# 5.x (pip then resolves lerobot 0.5.1 + transformers 5.x +
-# huggingface-hub 1.x) and have a system FFmpeg for torchcodec, or no
-# torchcodec at all so lerobot falls back to its bundled pyav decoder:
+# Chapter 2's live data pipeline is NOT needed here: one real sample from
+# its dataset (both camera views, the state, the instruction) ships inside
+# the ch03 package, so this notebook never runs on random noise. Chapter 2
+# also does not install alongside Chapter 3 under this repo's pins:
+# lerobot 0.5.1 requires huggingface-hub>=1.0,<2.0 while transformers
+# <5.0 requires huggingface-hub<1.0. To stream whole episodes yourself,
+# relax the transformers pin to allow 5.x (pip then resolves lerobot
+# 0.5.1 + transformers 5.x + huggingface-hub 1.x) and have a system
+# FFmpeg for torchcodec, or no torchcodec at all so lerobot falls back to
+# its bundled pyav decoder:
 #   !pip install -q "lrm-ch02[data] @ git+{ORG}/lrm-code-chapter-2.git"
 """)
 
 md("""
 ## 3.1 Load two camera views, an instruction, and a state
 
-Chapter 3 imports the data contract Chapter 2 froze:
-``make_pickplace_dataloader``. Each batch carries two camera images,
+Chapter 3 consumes the data contract Chapter 2 froze: batches from
+``make_pickplace_dataloader`` carry two camera images,
 ``observation.images.up`` and ``observation.images.side``, each
 ``[B, 3, 480, 640]`` in ``[0, 1]``, the 6-dim joint state, the 6-dim
 action (Chapter 4 uses that), and ``task``, the natural-language
-instruction. We pull one frame from each camera to drive the rest of the
-chapter. If the dataset is not available locally, we fall back to
-synthetic frames so the notebook still runs.
+instruction. Chapter 2's loader needs the ``[data]`` extra and a video
+decoder, so one real sample from that dataset travels with this package
+instead: ``load_sample`` returns exactly what one dataloader row hands
+over, and every listing below runs on it.
 """)
 
 code("""
 import torch
 
-try:
-    from ch02 import make_pickplace_dataloader
-    loader, stats = make_pickplace_dataloader(batch_size=8)
-    batch = next(iter(loader))
-    up = batch["observation.images.up"][0]      # [3, 480, 640] in [0,1]
-    side = batch["observation.images.side"][0]   # [3, 480, 640] in [0,1]
-    frames = list(batch["observation.images.up"][:3])  # brick in 3 spots
-    state = batch["observation.state"][0]        # [6] z-scored
-    instruction = batch["task"][0]
-except Exception as exc:                       # no [data] extra / no net
-    print(f"Using synthetic frames (Chapter 2 data unavailable: {exc})")
-    up = torch.rand(3, 480, 640)
-    side = torch.rand(3, 480, 640)
-    frames = [torch.rand(3, 480, 640) for _ in range(3)]
-    state = torch.zeros(6)
-    instruction = "put the lego brick in the box"
+from ch03 import load_sample
 
-print("up:", tuple(up.shape), "| side:", tuple(side.shape))
-print("state:", tuple(state.shape), "| instruction:", instruction)
+images, state, instruction = load_sample()   # one real Chapter 2 sample
+up = images[0, 0]     # [3, 480, 640] in [0,1] observation.images.up
+side = images[0, 1]   # [3, 480, 640] in [0,1] observation.images.side
+
+print("images:", tuple(images.shape), "| up:", tuple(up.shape))
+print("state:", tuple(state.shape), state.dtype, "| z-scored")
+print("instruction:", instruction)
 """)
 
 md("""
@@ -130,8 +125,9 @@ md("""
 Pick one patch and measure cosine similarity between its frozen SigLIP
 feature and every other patch. Querying a brick patch lights up the brick;
 querying an arm patch lights up the arm. The frozen encoder already
-groups object regions, with no training. (Pick grid positions that land
-on the brick and the arm in your frame; the grid is 14x14.)
+groups object regions, with no training. The grid is 14x14, and the two
+queries below are the brick's cell and the arm's cell in this frame; on
+a different frame, pick the cells the brick and the arm land in there.
 """)
 
 code("""
@@ -140,7 +136,7 @@ from ch03.viz_similarity import similarity_grid
 fig_3_3 = similarity_grid(            # Figure 3.3
     vision_encoder,
     up,
-    [(11, 6, "brick query"), (5, 7, "arm query")],
+    [(11, 4, "brick query"), (5, 7, "arm query")],
 )
 """)
 
@@ -158,7 +154,7 @@ code("""
 from ch03 import StateEncoder
 
 state_encoder = StateEncoder()
-state_token = state_encoder(state.unsqueeze(0))
+state_token = state_encoder(state)                   # state is [1, 6]
 print("state token:", tuple(state_token.shape))      # [1, 576]
 """)
 
@@ -244,11 +240,10 @@ is the contract Chapter 4 attaches an action head to.
 """)
 
 code("""
-images = torch.stack([up, side])                     # [2, 3, 480, 640]
-images = preprocess_image(images).unsqueeze(0)       # [1, 2, 3, 224, 224]
+views = preprocess_image(images[0])                  # [2, 3, 224, 224]
 ids = torch.tensor([sequence_ids])                   # [1, N]
 with torch.no_grad():
-    hidden = backbone(images, ids, state.unsqueeze(0))
+    hidden = backbone(views.unsqueeze(0), ids, state)
 print("backbone output:", tuple(hidden.shape))       # [1, 392 + L + 1, 576]
 """)
 
@@ -287,18 +282,20 @@ frozen = sum(p.numel() for p in backbone.parameters()
              if not p.requires_grad)
 assert trainable < 140_000_000, trainable
 print("contract OK:", (B, N, width), "| vocab still 49152")
+print(f'real sample: "{instruction}" | L = {L}')
 print(f"trainable: {trainable:,} | frozen: {frozen:,}")
 """)
 
 md("""
-### The frozen encoder tracks the object across frames
+### The frozen encoder finds the object from either viewpoint
 
-Query the brick patch in three frames where the brick sits in different
-positions. The highlighted region follows the brick each time. With no
-training, the frozen vision encoder localizes the object wherever it is,
-which is why we can freeze it and build the policy on top. (Each frame's
-query is the brick's grid cell in that frame; the brick moves, so the
-query moves with it.)
+Query the brick patch in each camera view. The brick sits in a different
+part of the frame in each one, and the highlight lands on it both times.
+With no training, the frozen vision encoder localizes the object wherever
+it appears, which is why we can freeze it and build the policy on top.
+(Each panel's query is the brick's grid cell in that view; the brick
+moves between views, so the query moves with it. Stream more frames with
+Chapter 2's loader to watch the same thing across an episode.)
 
 The instruction does not steer this yet; the vision encoder never reads
 the language. Wiring language into where the model looks is what Chapter 4
@@ -310,9 +307,9 @@ from ch03.viz_similarity import tracking_grid
 
 fig_track = tracking_grid(          # bonus viz (not a chapter figure)
     vision_encoder,
-    frames,
-    queries=[(11, 5), (11, 8), (9, 6)],  # the brick's cell in each frame
-    labels=["brick position 1", "brick position 2", "brick position 3"],
+    [up, side],
+    queries=[(11, 4), (8, 11)],     # the brick's cell in each view
+    labels=["overhead camera", "side camera"],
 )
 """)
 

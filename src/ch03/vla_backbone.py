@@ -106,11 +106,22 @@ class UnifiedEmbeddingBackbone(nn.Module):
     def _grow_embeddings(
         embed: nn.Embedding, new_size: int
     ) -> nn.Embedding:
-        """Copy an embedding table into a slightly larger one."""
+        """Copy an embedding table into a slightly larger one.
+
+        The new table inherits the source table's dtype and device.
+        ``nn.Embedding`` would otherwise default to float32 on the CPU,
+        and a backbone loaded in bfloat16 (what recent Transformers
+        releases do for SmolLM2) would then fail in ``forward`` with a
+        dtype mismatch.
+        """
         if embed.num_embeddings >= new_size:
             return embed
         grown = nn.Embedding(
-            new_size, embed.embedding_dim, padding_idx=embed.padding_idx
+            new_size,
+            embed.embedding_dim,
+            padding_idx=embed.padding_idx,
+            dtype=embed.weight.dtype,
+            device=embed.weight.device,
         )
         with torch.no_grad():
             grown.weight[: embed.num_embeddings] = embed.weight
