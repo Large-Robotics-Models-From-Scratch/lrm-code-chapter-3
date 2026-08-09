@@ -10,7 +10,7 @@ This chapter builds the **VLA backbone**: a frozen SigLIP vision encoder + a Smo
 images ──▶  VisionEncoder (SigLIP, frozen, 2 cams) ──▶  [B, 392, 576]
 text   ──▶  LanguageBackbone (SmolLM2-135M)        ──▶  [B,  L,  576]
 state  ──▶  StateEncoder (MLP)                     ──▶  [B,  1,  576]
-        masked_scatter splice into the backbone's own stream
+        concatenated into one sequence, fed via inputs_embeds
         (the pretrained backbone fuses; no separate fusion module)
                           ▼
                     [B, 392+L+1, 576]
@@ -37,7 +37,7 @@ images, state, instruction = load_sample()
 |---|---|
 | Vision encoder | SigLIP-base/16 (frozen) |
 | Language backbone | SmolLM2-135M (native tokenizer; **no vocab expansion** - that's Ch 4) |
-| Fusion | Token-level fusion: image and state tokens spliced into the backbone's stream via `masked_scatter`; the pretrained backbone fuses (no separate fusion module on the main path) |
+| Fusion | Token-level fusion: image, language, and state embeddings concatenated into one sequence, fed via `inputs_embeds`; the pretrained backbone fuses (no separate fusion module, no placeholder IDs) |
 | Hidden dim | 576 (the backbone's native width) |
 | Robot | SO-100 (6-DOF arm + 1 gripper) |
 | Camera input | both `observation.images.up` and `observation.images.side` (two cameras, 392 image tokens = 2 x 196) |
@@ -133,21 +133,24 @@ lrm-code-chapter-3/
 ## Hand-off contract to chapter 4
 
 ```python
-import torch
 from ch03 import VLABackbone
 
 backbone = VLABackbone()
-text_ids = backbone.tokenize_instruction(instruction)
-sequence_ids = torch.tensor(
-    [backbone.build_sequence_ids(text_ids)], dtype=torch.long
-)  # [1, N]
-hidden = backbone(images, sequence_ids, state)
-# images:       [B, 2, 3, 224, 224]   two cameras (up + side), preprocessed
-# text_ids:     list[int]             L native SmolLM2 ids from tokenize_instruction
-# sequence_ids: [B, N] long tensor    image + text + state template rows
-# state:        [B, 6]                SO-101 state (5 joint positions + gripper) per Ch 2 Table 2.2
-# hidden:       [B, N, 576]           N = 392 + L + 1
-# tokenizer:    native SmolLM2 (49,152 vocab) - no expansion in Ch 3
+tokens = backbone.tokenizer(
+    [instruction], return_tensors="pt", padding=True
+)
+hidden = backbone(
+    images, tokens.input_ids, state, tokens.attention_mask
+)
+# images:  [B, 2, 3, H, W] in [0, 1]  two cameras (up + side); the
+#                                     vision module resizes to 224
+# input_ids: [B, L] long tensor       HF text ids (pad token = eos)
+# state:   [B, 6]                     SO-101 state per Ch 2 Table 2.2
+# hidden:  [B, N, 576]                N = 392 + L + 1
+# Two-stage access for heads that extend the sequence:
+#   emb, mask, pos = backbone.embed_inputs(images, ids, state, m)
+#   hidden = backbone.contextualize(emb, mask, pos)
+# tokenizer: native SmolLM2 (49,152 vocab) - no expansion in Ch 3
 ```
 
 `fusion_transformer.py` is the optional separate-encoder fusion exercise (Exercise 3.4), kept off the main path; the shipped backbone fuses by splicing image and state tokens into the language backbone's own stream.

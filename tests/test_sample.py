@@ -8,7 +8,7 @@ integration like the rest of the backbone suite.
 import pytest
 import torch
 
-from ch03 import VLABackbone, load_sample, preprocess_image
+from ch03 import VLABackbone, load_sample
 from ch03.vla_backbone import IMAGE_TOKENS, SMOLLM_WIDTH
 
 INSTRUCTION = "pink lego brick into the transparent box"
@@ -41,17 +41,23 @@ def test_load_sample_is_a_real_frame_pair():
 @pytest.mark.integration
 def test_backbone_runs_on_the_real_sample():
     # The whole point of shipping the sample: the chapter's final
-    # contract check runs on real data instead of torch.rand.
+    # contract check (listing 3.7) runs on real data instead of
+    # torch.rand. The raw 480x640 frames go in directly; the vision
+    # module resizes internally.
     images, state, instruction = load_sample()
     backbone = VLABackbone().eval()
-    text_ids = backbone.tokenize_instruction(instruction)
-    sequence_ids = torch.tensor([backbone.build_sequence_ids(text_ids)])
-    with torch.no_grad():
-        hidden = backbone(preprocess_image(images[0]).unsqueeze(0),
-                          sequence_ids, state)
-    assert hidden.shape == (
-        1,
-        IMAGE_TOKENS + len(text_ids) + 1,
-        SMOLLM_WIDTH,
+    tokens = backbone.tokenizer(
+        [instruction], return_tensors="pt", padding=True
     )
+    L = tokens.input_ids.shape[1]
+    with torch.no_grad():
+        emb, mask, pos = backbone.embed_inputs(
+            images, tokens.input_ids, state, tokens.attention_mask
+        )
+        hidden = backbone.contextualize(emb, mask, pos)
+    assert emb.shape == (1, IMAGE_TOKENS + L + 1, SMOLLM_WIDTH)
+    assert hidden.shape == emb.shape
     assert hidden.dtype == torch.float32
+    # The identical shapes hide the chapter's central point: the
+    # vectors changed. Contextualization must actually do something.
+    assert not torch.allclose(hidden, emb.to(hidden.dtype), atol=1e-2)

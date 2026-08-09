@@ -1,6 +1,6 @@
 # Chapter 3 Software Design
 
-> **Superseded by v5**: the shipped backbone is `VLABackbone` (the v3 name, kept), language model is `SmolLM2-135M`, hidden width is **576** (the backbone's native width, no down-projection to 512), two cameras give **392** image tokens, and fusion is a `masked_scatter` token-level splice into the language backbone's own stream (the pretrained backbone is the fuser; `fusion_transformer.py` is only the optional separate-encoder exercise). Output contract: `[B, 392 + L + 1, 576]`. The APIs below are corrected for the load-bearing facts; some prose still reflects the older single-camera / separate-fusion plan.
+> **Superseded by v5**: the shipped backbone is `VLABackbone` (the v3 name, kept), language model is `SmolLM2-135M`, hidden width is **576** (the backbone's native width, no down-projection to 512), two cameras give **392** image tokens, and fusion is a token-level concatenation fed to the language backbone via `inputs_embeds` (concat migration 2026-08-09; the splice is retired) (the pretrained backbone is the fuser; `fusion_transformer.py` is only the optional separate-encoder exercise). Output contract: `[B, 392 + L + 1, 576]`. The APIs below are corrected for the load-bearing facts; some prose still reflects the older single-camera / separate-fusion plan.
 
 Companion to `chapter_3_plan.md`. The plan locks the *what* — listings, exports, prose mapping. This doc locks the *how* — module APIs, notebook architecture, test strategy, dependency pinning, agent prompt.
 

@@ -19,7 +19,7 @@ STATE_DIM = 6
 
 
 class StateEncoder(nn.Module):
-    """Project ``[B, state_dim]`` state to one ``[B, 576]`` state token."""
+    """Project ``[B, state_dim]`` state to one ``[B, 1, 576]`` token."""
 
     def __init__(
         self,
@@ -34,5 +34,10 @@ class StateEncoder(nn.Module):
         )
 
     def forward(self, state: torch.Tensor) -> torch.Tensor:
-        """Encode ``[B, state_dim]`` to one ``[B, 576]`` state token."""
-        return self.net(state)
+        """Encode ``[B, state_dim]`` to one ``[B, 1, 576]`` state token.
+
+        The ``unsqueeze(1)`` adds the sequence dimension, so the
+        output concatenates directly with the ``[B, 392, 576]`` image
+        block and the ``[B, L, 576]`` text block.
+        """
+        return self.net(state).unsqueeze(1)

@@ -11,16 +11,16 @@ def test_default_state_dim_is_six():
 
 
 def test_output_shape_is_one_token(dummy_state):
+    # [B, 1, 576]: the sequence dimension is already present, so the
+    # token concatenates directly with the image and text blocks.
     encoder = StateEncoder(state_dim=6, width=576)
     out = encoder(dummy_state)
-    assert out.shape == (2, 576)
+    assert out.shape == (2, 1, 576)
 
 
 def test_has_nonlinearity():
     encoder = StateEncoder()
-    has_gelu = any(
-        isinstance(m, nn.GELU) for m in encoder.modules()
-    )
+    has_gelu = any(isinstance(m, nn.GELU) for m in encoder.modules())
     assert has_gelu
 
 

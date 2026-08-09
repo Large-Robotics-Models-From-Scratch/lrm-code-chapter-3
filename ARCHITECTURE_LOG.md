@@ -152,3 +152,29 @@ Ch 3 does NOT predict actions — it produces backbone hidden states. The `actio
 - **Scale fusion layers** (6 → 12 or more) in Ch 6 — Ch 6 author decides.
 - **`observation.images.side` fusion pattern** (concat vs separate tower) — Ch 6 author decides.
 - **Image renormalization for SigLIP** — does Ch 3's `preprocess.py` need to apply ImageNet mean/std on top of Ch 2's `/255`? Verify with the SigLIP preprocessor.
+
+## 2026-08-09: Concat migration (placeholder IDs and masked_scatter retired)
+
+The fused sequence is now built by direct concatenation of the encoded
+streams, fed to SmolLM2 through `inputs_embeds`. Rationale: only the
+language stream has vocabulary ids; the placeholder-ID + masked_scatter
+splice taught tensor bookkeeping as if it were a fusion concept, and the
+Chapter 4 parallel action head needs the pre-Transformer embeddings
+anyway. Changes:
+
+- `VLABackbone` exposes two stages: `embed_inputs(...)` -> (input
+  embeddings, attention mask, mask-derived position ids), and
+  `contextualize(...)` -> hidden states. `forward` chains them.
+- No grown embedding table, no `set_input_embeddings`, no reserved ids.
+  The table stays native at 49,152 rows.
+- Padding is first-class: `tokenizer.pad_token = eos`, and position ids
+  count valid slots only, so the state token's rotary position is
+  392 + L_valid regardless of batch padding.
+- `StateEncoder` returns `[B, 1, 576]` (sequence dim included).
+- `VisionEncoder` accepts any input resolution and resizes internally
+  via `preprocess_image` (matches manuscript 3.2.4).
+- `tests/test_migration_parity.py` pins numerical equivalence between
+  the retired splice and the concat construction; `test_guardrails.py`
+  bans `masked_scatter` from `src/`.
+- BREAKING for Ch 4: `tokenize_instruction` / `build_sequence_ids`
+  removed; forward takes HF text `input_ids` + optional text mask.

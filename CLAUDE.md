@@ -12,7 +12,7 @@ This repo contains the code for **the VLA backbone**: a frozen SigLIP vision enc
 |---|---|---|
 | Vision encoder | SigLIP-base/16 (frozen) | `src/ch03/vision_encoder.py` |
 | Language backbone | SmolLM2-135M (**native tokenizer; no vocab expansion**) | `src/ch03/language_backbone.py` |
-| Fusion | Token-level fusion: image tokens spliced into the language backbone's stream via `masked_scatter`; the pretrained backbone fuses (no separate fusion module on the main path) | `src/ch03/vla_backbone.py` (source of truth); `fusion_transformer.py` kept only as the optional "separate-encoder fusion" exercise |
+| Fusion | Token-level fusion: image, language, and state embeddings concatenated into one sequence, fed to the backbone via `inputs_embeds`; the pretrained backbone fuses (no separate fusion module on the main path, no placeholder IDs, no `masked_scatter`) | `src/ch03/vla_backbone.py` (source of truth); `fusion_transformer.py` kept only as the optional "separate-encoder fusion" exercise |
 | Hidden dim | 576 | The language backbone's native width; all projections target 576 |
 | Robot | SO-100 sim env (PickCubeSO100-v1); SO-101 teleop dataset (6-DOF: 5 arm + gripper) | Ch 2 hand-off |
 | Camera input | both `observation.images.up` and `observation.images.side` (two cameras, 392 image tokens = 2 x 196) | Ch 2 hand-off |
@@ -24,9 +24,11 @@ This repo contains the code for **the VLA backbone**: a frozen SigLIP vision enc
 - Action token reservation (256 bins × 6 dims = 1,536 IDs)
 - Action head + autoregressive prediction loop
 
-> Note: the backbone grows its input embedding table by two inert placeholder rows for the image and state splice markers. This is **not** vocabulary expansion - the rows are overwritten by `masked_scatter` before the backbone runs, the tokenizer is untouched, and `config.vocab_size` stays 49152. The grown table is handed back with `set_input_embeddings`, so the model holds exactly **one** embedding table (a second, unread copy would add ~28.3M trainable parameters). Never reach for `resize_token_embeddings`: it rewrites `config.vocab_size`, which Ch 3 asserts.
+> Note (2026-08-09 concat migration): the placeholder-ID + `masked_scatter` splice is RETIRED. Only the language stream carries vocabulary IDs; image and state streams enter as vectors and the three are concatenated, so the embedding table stays native (49,152 rows, no grown copy, no `set_input_embeddings`). The only sanctioned copy of the old splice lives in `tests/test_migration_parity.py`, which pins numerical equivalence between the two constructions. `tests/test_guardrails.py` bans `masked_scatter` from `src/`. Never reach for `resize_token_embeddings`: it rewrites `config.vocab_size`, which Ch 3 asserts.
 
-> Note: `VLABackbone` **composes** `VisionEncoder` (`self.vision_encoder = VisionEncoder(hidden_dim=576)`); it does not rebuild the vision path. The frozen SigLIP, the 768->576 projection, and SigLIP's `[0,1]`->`[-1,1]` pixel normalization all live in `vision_encoder.py` only. There is no `img_proj` on the backbone.
+> Note: the backbone exposes **two representation levels**: `embed_inputs(images, input_ids, state, text_attention_mask=None) -> (input_embeddings, attention_mask, position_ids)` stops before the Transformer; `contextualize(...)` runs SmolLM2 over prepared embeddings via `inputs_embeds`; `forward` chains the two. Padding reuses SmolLM2's end-of-text token (`tokenizer.pad_token = eos`), and position IDs are derived from the attention mask so padded text slots never shift the state token's rotary position (state = 392 + L_valid).
+
+> Note: `VLABackbone` **composes** `VisionEncoder` (`self.vision_encoder = VisionEncoder(hidden_dim=576)`); it does not rebuild the vision path. The frozen SigLIP, the resize to 224 (any input resolution accepted, per manuscript 3.2.4 "the vision module resizes"), the 768->576 projection, and SigLIP's `[0,1]`->`[-1,1]` pixel normalization all live in `vision_encoder.py` only. There is no `img_proj` on the backbone.
 
 ## Hand-off contracts
 
@@ -41,25 +43,39 @@ This repo contains the code for **the VLA backbone**: a frozen SigLIP vision enc
 
 **To Chapter 4**:
 ```python
-import torch
 from ch03 import VLABackbone
 
 backbone = VLABackbone()
-text_ids = backbone.tokenize_instruction(instruction)  # L native SmolLM2 ids
-sequence_ids = torch.tensor(
-    [backbone.build_sequence_ids(text_ids)], dtype=torch.long
-)  # [1, N]
-hidden = backbone(images, sequence_ids, state)  # images: [B, 2, 3, 224, 224]
-# hidden: [B, N, 576]  where N = 392 + L + 1
+tokens = backbone.tokenizer(
+    [instruction], return_tensors="pt", padding=True
+)  # HF input_ids [B, L] + attention_mask; pad token reuses eos
+
+# Simple path (factorized head reads contextualized states):
+hidden = backbone(
+    images, tokens.input_ids, state, tokens.attention_mask
+)  # images: [B, 2, 3, H, W] in [0, 1]; hidden: [B, N, 576], N = 392 + L + 1
+
+# Extended path (parallel head appends action slots pre-Transformer):
+embeddings, mask, position_ids = backbone.embed_inputs(
+    images, tokens.input_ids, state, tokens.attention_mask
+)
+# ...append slot vectors to embeddings, extend mask/position_ids,
+# build the block mask INCORPORATING `mask` (do not replace it), then
+# run backbone.contextualize(...) or the language model directly.
 ```
 
-> **Cross-chapter API change (this PR):** the fused-layout builder is
-> `build_sequence_ids` and the `forward` argument is `sequence_ids` (was
-> `build_input_ids` / `input_ids`). This renames only OUR fused layout;
-> Hugging Face's `input_ids` (tokenizer/model API) is untouched. The
-> fused sequence length is `N = 392 + L + 1`. **Chapter 4's repo must
-> adopt `build_sequence_ids` / `sequence_ids`** in the hand-off call
-> above; Vatsal owns Ch 4 and needs to sync this contract.
+> **Cross-chapter API change (concat migration, 2026-08-09):**
+> `tokenize_instruction` and `build_sequence_ids` are REMOVED. The
+> forward signature is now `(images, input_ids, state,
+> text_attention_mask=None)` where `input_ids` is Hugging Face's
+> text-only tokenizer output `[B, L]`, and `embed_inputs` returns a
+> 3-tuple `(input_embeddings, attention_mask, position_ids)`.
+> **Chapter 4 must adopt this contract**: its parallel head's custom
+> block mask must incorporate the returned prefix `attention_mask`
+> (padded instruction slots are invalid) rather than building its own
+> from scratch, and its autoregressive head embeds action-token IDs
+> through its own expanded table and concatenates at the embedding
+> level. Vatsal owns Ch 4 and needs to sync this contract.
 
 ## Code-style agents
 
