@@ -3,7 +3,7 @@
 The notebook drives the installed ``ch03`` package (and ``ch02`` for the
 dataloader). The full annotated source of each listing lives in
 ``src/ch03/`` and in the book prose; the notebook constructs and exercises
-each component end to end, mirroring the chapter's seven listings.
+each component end to end, mirroring the chapter's eight listings.
 
 Run: ``python scripts/build_notebook.py`` (needs nbformat from [dev]).
 """
@@ -147,8 +147,8 @@ md("""
 ### Listing 3.3 The state encoder
 
 A two-layer MLP (``Linear -> GELU -> Linear``) lifts the 6 joint numbers
-(five arm joints plus the gripper) into one 576-dim state token that sits
-beside the image and language tokens.
+(five arm joints plus the gripper) into one 576-dim state token, shape [1, 1, 576] with the sequence
+dimension included, that sits beside the image and language tokens.
 """)
 
 code("""
@@ -156,7 +156,7 @@ from ch03 import StateEncoder
 
 state_encoder = StateEncoder()
 state_token = state_encoder(state)                   # state is [1, 6]
-print("state token:", tuple(state_token.shape))      # [1, 576]
+print("state token:", tuple(state_token.shape))      # [1, 1, 576]
 """)
 
 md("""
@@ -255,9 +255,9 @@ print(f"mean |change| per element after fusion: {delta:.3f}")
 """)
 
 md("""
-### Listing 3.7 Following one observation through the complete backbone
+### Listings 3.7 + 3.8 Completing the backbone and running one observation
 
-Before handing the backbone to Chapter 4, check the contract holds: the
+Listing 3.7 packages the two stages into the `VLABackbone` class (built above); listing 3.8 runs one recorded observation through it. Before handing the backbone to Chapter 4, check the contract holds: the
 output sequence is ``392 + L + 1`` long and 576 wide, the tokenizer was
 never expanded (``config.vocab_size`` is still 49,152, and the padding
 token reuses end-of-text), and the vision path is the composed

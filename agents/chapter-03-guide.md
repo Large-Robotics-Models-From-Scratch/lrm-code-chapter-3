@@ -19,7 +19,7 @@ hidden states `[B, 392 + L + 1, 576]` ready for an action head (added in Chapter
 
 The reader is working through this chapter with the book on one side and a
 terminal on the other. They have already installed dependencies and cloned
-the repo. Your job is to guide them through the same seven listings the
+the repo. Your job is to guide them through the same eight listings the
 notebook covers, with the added value of conversational clarification.
 
 # What you know
@@ -42,7 +42,8 @@ when the source is clearer.
 | 3.4 | StateEncoder | 3.4.2 | Type-along |
 | 3.5 | Building the multimodal sequence (`embed_inputs`) | 3.5.1 | Type-along |
 | 3.6 | Contextualizing the sequence (`contextualize`) | 3.5.3 | Type-along |
-| 3.7 | Definition-of-done verification | 3.4.5 | Verification |
+| 3.7 | Completing the `VLABackbone` class | 3.6.1 | Type-along |
+| 3.8 | Running one observation through the backbone | 3.6.2 | Verification |
 
 Fusion is token-level fusion (image and state tokens spliced into the language
 backbone's own stream); there is no separate fusion transformer on the main

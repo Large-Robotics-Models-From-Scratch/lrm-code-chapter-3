@@ -10,7 +10,7 @@ Read this end-to-end before writing any Python.
 
 | Input | Where | Role |
 |---|---|---|
-| **Chapter plan** | `docs/chapter_3_plan.md` (synced with `../lrm-book/chapter_3/chapter_3_structure_and_plan.md`) | The *what*. 7 listings, 6 figures, 5 concept boxes, the Ch3→Ch4 export contract. |
+| **Chapter plan** | `docs/chapter_3_plan.md` (synced with `../lrm-book/chapter_3/chapter_3_structure_and_plan.md`) | The *what*. 8 listings, 7 figures, 5 concept boxes, the Ch3→Ch4 export contract. |
 | **Agent toolkit** | `../lrm-code-agents/` | The *check*. Code agents (style-check, listing-check, chapter-continuity, test-gen, resource-check) + (coming) prose agents. |
 | **Style guide** | `docs/MANNING_STYLE.md` + `../lrm-book/STYLEGUIDE.md` | The *how*. Manning conventions — annotations, line widths, banned words, code style. |
 | **Ch 2 export contract** | `from ch02 import make_pickplace_dataloader, normalize, denormalize` (Sid's repo) | The *upstream*. Frozen interface; do not modify. |
@@ -58,7 +58,7 @@ This repo follows the **Raschka-style hybrid model** used across Manning's "from
 
 Every listing has a home in **both** artifacts.
 
-For each of the 7 listings in `docs/chapter_3_plan.md`, in order:
+For each of the 8 listings in `docs/chapter_3_plan.md`, in order:
 
 1. **Read the listing spec** in `docs/chapter_3_plan.md`.
 2. **Locate the module**:
@@ -129,7 +129,7 @@ A module is done when:
 - [ ] `resource-check` flags no critical issues
 
 The chapter is done when:
-- [ ] All 7 listings implemented in `src/ch03/` and validated
+- [ ] All 8 listings implemented in `src/ch03/` and validated
 - [ ] `notebooks/ch03.ipynb` runs top-to-bottom from a fresh kernel
 - [ ] All 6 figures rendered and saved to `figures/`
 - [ ] `agents/chapter-03-guide.md` listing roadmap matches `docs/chapter_3_plan.md`
