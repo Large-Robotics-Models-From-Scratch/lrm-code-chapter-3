@@ -3,7 +3,7 @@
 The notebook drives the installed ``ch03`` package (and ``ch02`` for the
 dataloader). The full annotated source of each listing lives in
 ``src/ch03/`` and in the book prose; the notebook constructs and exercises
-each component end to end, mirroring the chapter's eight listings.
+each component end to end, mirroring the chapter's seven listings.
 
 Run: ``python scripts/build_notebook.py`` (needs nbformat from [dev]).
 """
@@ -31,16 +31,16 @@ md("""
 
 You walk in with a robot in simulation and a dataset of teleoperated
 pick-and-place episodes from Chapter 2. You walk out having built a
-vision-language-action backbone: a network that takes two camera views,
-an instruction, and the robot's joint state, and produces a fused
-sequence of hidden states ready for an action head (Chapter 4).
+VLA backbone: a network that takes two camera views, an instruction,
+and the robot's joint state, and produces contextualized hidden states
+ready for an action head (Chapter 4).
 
-Fusion here is *token-level fusion*. The two camera views and the state
-are encoded to the language backbone's width and concatenated with the
-language embeddings into one sequence, which enters SmolLM2 through its
-``inputs_embeds`` interface, so the pretrained backbone is the fuser:
-there is no separate fusion module on the main path. The output is
-``[B, 392 + L + 1, 576]``.
+Fusion here happens by *direct concatenation*. The two camera views and
+the state are encoded to the language backbone's width and concatenated
+with the language input embeddings into one sequence, the observation
+prefix, which enters SmolLM2 through its ``inputs_embeds`` interface.
+The pretrained language backbone is the fuser: there is no separate
+fusion module on the main path. The output is ``[B, 392 + L + 1, 576]``.
 
 The full annotated source of every listing is in ``src/ch03/`` and in the
 book prose. This notebook installs the package, then constructs and runs
@@ -106,9 +106,12 @@ md("""
 ### Listing 3.1 Loading and freezing SigLIP
 
 ``VisionEncoder`` wraps a frozen SigLIP-base/16 and projects its 768-dim
-patch tokens to the book's common 576-dim width. A 224x224 image at patch
-size 16 gives a 14x14 grid, so we get 196 patch tokens per frame. (Full
-source: ``src/ch03/vision_encoder.py``.)
+patch representations to the book's common 576-dim width. A 224x224 image
+at patch size 16 gives a 14x14 grid, so we get 196 visual input
+embeddings per frame. The resize to 224 is bicubic with antialiasing, and
+it lives in one place, ``preprocess_image``, which the encoder itself
+calls for frames that arrive at another size. (Full source:
+``src/ch03/vision_encoder.py``.)
 """)
 
 code("""
@@ -117,7 +120,7 @@ from ch03 import VisionEncoder, preprocess_image
 vision_encoder = VisionEncoder().eval()
 up_224 = preprocess_image(up)                  # [3,480,640] -> [3,224,224]
 patches = vision_encoder(up_224.unsqueeze(0))
-print("patch tokens:", tuple(patches.shape))        # [1, 196, 576]
+print("visual embeddings:", tuple(patches.shape))   # [1, 196, 576]
 """)
 
 md("""
@@ -147,30 +150,32 @@ md("""
 ### Listing 3.3 The state encoder
 
 A two-layer MLP (``Linear -> GELU -> Linear``) lifts the 6 joint numbers
-(five arm joints plus the gripper) into one 576-dim state token, shape [1, 1, 576] with the sequence
-dimension included, that sits beside the image and language tokens.
+(five arm joints plus the gripper) into one 576-dim state embedding,
+shape [1, 1, 576] with the sequence dimension included, which occupies
+the state position beside the visual and language positions.
 """)
 
 code("""
 from ch03 import StateEncoder
 
 state_encoder = StateEncoder()
-state_token = state_encoder(state)                   # state is [1, 6]
-print("state token:", tuple(state_token.shape))      # [1, 1, 576]
+state_embedding = state_encoder(state)               # state is [1, 6]
+print("state embedding:", tuple(state_embedding.shape))   # [1, 1, 576]
 """)
 
 md("""
 ## 3.4 The brain: the language backbone
 
-### Listing 3.4 Looking up SmolLM2 token embeddings
+### Listing 3.4 Looking up SmolLM2 input embeddings
 
-SmolLM2-135M's native tokenizer (49,152 ids, no vocabulary changes here;
-that is Chapter 4's first step) turns the instruction into L token ids,
-and the embedding table maps each id to a 576-dim vector: a row lookup,
+SmolLM2-135M's native tokenizer (49,152 ids, and no vocabulary changes
+here or in Chapter 4) turns the instruction into L token ids, and the
+embedding table maps each id to a 576-dim input embedding: a row lookup,
 no Transformer layers yet. SmolLM2's native width is already the book's
-common width D=576, so the language stream needs no projection. These
-embeddings are uncontextualized; contextualization happens once, over
-the whole fused sequence, in Section 3.5.
+common width, d_model = 576, so the language stream needs no projection.
+Only language positions carry vocabulary ids. These input embeddings are
+uncontextualized; contextualization happens once, over the whole
+multimodal sequence, in Section 3.5.
 """)
 
 code("""
@@ -184,7 +189,7 @@ input_ids = tokenizer(instruction, return_tensors="pt").input_ids
 embed_tokens = language_backbone.get_input_embeddings()
 embeddings = embed_tokens(input_ids)
 print("token ids:", input_ids[0].tolist())
-print("language embeddings:", tuple(embeddings.shape))  # [1, L, 576]
+print("language input embeddings:", tuple(embeddings.shape))  # [1,L,576]
 """)
 
 md("""
@@ -192,24 +197,24 @@ md("""
 """)
 
 md("""
-### Listing 3.5 Building the multimodal input sequence
+### Listing 3.5 Building the multimodal sequence
 
 The backbone composes what you already built. Its vision path is the
 ``VisionEncoder`` from listing 3.1, used unchanged, so the frozen SigLIP,
 the resize to 224, the 768 to 576 projection, and SigLIP's pixel
 normalization stay in one place; alongside it sit the state encoder and
-the SmolLM2-135M backbone itself.
+the SmolLM2-135M language backbone itself.
 
-``embed_inputs`` builds the fused sequence by direct concatenation:
-the 392 visual embeddings (196 for camera 0, then 196 for camera 1),
-the L language embeddings looked up from SmolLM2's own table, then the
-one state embedding. Only the language stream carries vocabulary ids;
-the image and state streams enter as vectors, so nothing about the
-tokenizer or the embedding table changes and ``config.vocab_size``
-stays 49,152. It returns the input embeddings together with the
-attention mask and mask-derived position ids that describe them, laid
-out ``[image (392), text (L), state (1)]``. (Full source:
-``src/ch03/vla_backbone.py``.)
+``embed_inputs`` builds the observation prefix by direct concatenation:
+the 392 visual input embeddings (196 for the overhead camera, then 196
+for the side camera), the L language input embeddings looked up from
+SmolLM2's own table, then the one state embedding. Only the language
+stream carries vocabulary ids; the visual and state streams enter as
+vectors, so nothing about the tokenizer or the embedding table changes
+and ``config.vocab_size`` stays 49,152. It returns the input embeddings
+together with the attention mask and the mask-derived position ids that
+describe them, laid out ``[image (392), text (L), state (1)]``. (Full
+source: ``src/ch03/vla_backbone.py``.)
 """)
 
 code("""
@@ -232,7 +237,7 @@ print("vocab size unchanged:",
 """)
 
 md("""
-### Listing 3.6 Contextualizing the multimodal sequence
+### Listing 3.6 Transforming input embeddings into hidden states
 
 ``contextualize`` passes the completed embedding sequence through
 SmolLM2 via ``inputs_embeds``; vocabulary ids play no role at this
@@ -242,8 +247,8 @@ it under the causal attention pattern. The identical shapes hide the
 chapter's central point: the sequence structure is preserved while the
 information carried by its positions changes. ``forward`` chains
 ``embed_inputs`` and ``contextualize``; Chapter 4's parallel action
-head calls the two stages separately so it can extend the sequence
-between them.
+head calls the two stages separately so it can extend the observation
+prefix between them.
 """)
 
 code("""
@@ -251,13 +256,15 @@ with torch.no_grad():
     hidden = backbone.contextualize(embeddings, mask, position_ids)
 print("hidden states:", tuple(hidden.shape))  # same shape, new content
 delta = (hidden - embeddings).abs().mean().item()
-print(f"mean |change| per element after fusion: {delta:.3f}")
+print(f"mean |change| per element after contextualizing: {delta:.3f}")
 """)
 
 md("""
-### Listings 3.7 + 3.8 Completing the backbone and running one observation
+### Listing 3.7 Running the complete VLA backbone on one observation
 
-Listing 3.7 packages the two stages into the `VLABackbone` class (built above); listing 3.8 runs one recorded observation through it. Before handing the backbone to Chapter 4, check the contract holds: the
+The two stages above are the whole backbone, and ``forward`` composes
+them, so one call takes the recorded observation to hidden states.
+Before handing the backbone to Chapter 4, check the contract holds: the
 output sequence is ``392 + L + 1`` long and 576 wide, the tokenizer was
 never expanded (``config.vocab_size`` is still 49,152, and the padding
 token reuses end-of-text), and the vision path is the composed
@@ -268,7 +275,19 @@ invariants the ``tests/`` suite asserts.
 code("""
 from ch03 import VisionEncoder
 
-B, N, width = hidden.shape
+with torch.no_grad():                      # the ordinary forward path
+    hidden_states = backbone(
+        images, tokens.input_ids, state, tokens.attention_mask
+    )
+print("camera frames: ", tuple(images.shape))
+print("language ids:  ", tuple(tokens.input_ids.shape))
+print("robot state:   ", tuple(state.shape))
+print("hidden states: ", tuple(hidden_states.shape))
+
+# forward is exactly embed_inputs followed by contextualize.
+assert torch.allclose(hidden_states, hidden, atol=1e-5)
+
+B, N, width = hidden_states.shape
 assert N == 392 + L + 1, (N, L)
 assert width == 576, width
 assert backbone.language_backbone.config.vocab_size == 49152
@@ -279,7 +298,7 @@ assert (backbone.tokenizer.pad_token_id
 assert isinstance(backbone.vision_encoder, VisionEncoder)
 assert not hasattr(backbone, "img_proj")
 
-# No placeholder rows, no grown table: the embedding table is native.
+# The embedding table stays native: 49,152 rows, no grown copy.
 assert (backbone.language_backbone.get_input_embeddings()
         .num_embeddings == 49152)
 
@@ -321,13 +340,14 @@ fig_track = tracking_grid(          # bonus viz (not a chapter figure)
 """)
 
 md("""
-## (Optional) Exercise 3.3: separate-encoder fusion
+## (Optional) Separate-encoder fusion
 
-The main path lets the pretrained backbone fuse the streams. The optional
-``FusionTransformer`` is the named alternative: a from-scratch stack of
-pre-norm causal self-attention blocks that you bolt onto the frozen
-streams and compare against token-level fusion. It is not on the
-main path and is not imported by ``VLABackbone``. (Source:
+The main path lets the pretrained language backbone fuse the streams.
+The optional ``FusionTransformer`` is the named alternative: a
+from-scratch stack of pre-norm causal self-attention blocks that you
+bolt onto the frozen streams and compare against the direct
+concatenation on the main path. It is not on the main path and is not
+imported by ``VLABackbone``. (Source:
 ``src/ch03/fusion_transformer.py``.)
 """)
 
@@ -336,24 +356,26 @@ from ch03.fusion_transformer import FusionTransformer
 
 fusion_transformer = FusionTransformer()              # hidden_dim=576
 dummy = torch.rand(1, 392 + L + 1, 576)
-print("fused:", tuple(fusion_transformer(dummy).shape))
+print("hidden states:", tuple(fusion_transformer(dummy).shape))
 """)
 
 md("""
 ## Summary
 
 You built a VLA backbone from pre-trained parts: a frozen SigLIP vision
-encoder, a trainable SmolLM2-135M language backbone, and a state encoder,
-fused by token-level fusion. The two camera views and the state are
-encoded to the backbone's width and concatenated with the language
-embeddings into one sequence that SmolLM2 reads through
-``inputs_embeds``, so the pretrained backbone is the fuser; there is no
-separate fusion module on the main path. The backbone exposes two
-stages, ``embed_inputs`` (input embeddings, mask, position ids) and
-``contextualize`` (hidden states), and maps two images, an instruction,
-and the robot state to ``[B, 392 + L + 1, 576]`` hidden states. Chapter
-4 reads those representations, or extends the input sequence before
-contextualization, to train the first working policy.
+encoder, a trainable SmolLM2-135M language backbone, and a state
+encoder, joined by direct concatenation. The two camera views and the
+state are encoded to the language backbone's width and concatenated
+with the language input embeddings into one observation prefix that
+SmolLM2 reads through ``inputs_embeds``, so the pretrained language
+backbone is the fuser; there is no separate fusion module on the main
+path. The backbone exposes two stages, ``embed_inputs`` (input
+embeddings, attention mask, position ids) and ``contextualize``
+(contextualized hidden states), and ``forward`` chains them, mapping
+two images, an instruction, and the robot state to
+``[B, 392 + L + 1, 576]`` hidden states. Chapter 4 reads those hidden
+states, or extends the observation prefix before contextualization, to
+train the first working policy.
 """)
 
 nb["cells"] = cells

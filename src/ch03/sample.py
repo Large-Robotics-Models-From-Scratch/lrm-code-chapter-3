@@ -27,8 +27,8 @@ import torch
 from PIL import Image
 
 ASSETS = Path(__file__).parent / "assets"
-# Camera order matches the fused layout: camera 0 is the overhead view
-# (observation.images.up), camera 1 the side view.
+# Camera order matches the observation prefix: camera 0 is the overhead
+# view (observation.images.up), camera 1 the side view.
 CAMERA_FRAMES = ("frame_up.png", "frame_side.png")
 METADATA = "sample.json"
 
@@ -55,7 +55,7 @@ def load_sample() -> tuple[torch.Tensor, torch.Tensor, str]:
     meta = json.loads((ASSETS / METADATA).read_text())
     frames = [_load_frame(ASSETS / name) for name in CAMERA_FRAMES]
     images = torch.stack(frames).unsqueeze(0)  # [1, 2, 3, 480, 640]
-    state = torch.tensor(
-        meta["state"], dtype=torch.float32
-    ).unsqueeze(0)  # [1, 6] float32, cast down from the dataset's float64
+    state = torch.tensor(meta["state"], dtype=torch.float32).unsqueeze(
+        0
+    )  # [1, 6] float32, cast down from the dataset's float64
     return images, state, meta["instruction"]

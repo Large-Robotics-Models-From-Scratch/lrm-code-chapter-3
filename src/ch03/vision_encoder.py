@@ -3,10 +3,10 @@
 SigLIP arrives pre-trained on billions of image-text pairs. We treat it
 as a fixed feature extractor: every SigLIP parameter is frozen, and the
 only thing trained is a single linear layer that projects SigLIP's
-768-dim patch tokens up to the book's common 576-dim width.
+768-dim patch representations to the book's common 576-dim width.
 
 A 224x224 image at patch size 16 yields a 14x14 grid, so the encoder
-returns 196 patch tokens per frame.
+returns 196 patch representations per frame.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ class VisionEncoder(nn.Module):
         return self.siglip(pixel_values=pixel_values).last_hidden_state
 
     def forward(self, images: torch.Tensor) -> torch.Tensor:
-        """Encode ``[B, 3, H, W]`` to ``[B, 196, 576]`` patch tokens.
+        """Encode ``[B, 3, H, W]`` to 196 visual input embeddings.
 
         Frames not already at 224 x 224 are resized internally.
         """

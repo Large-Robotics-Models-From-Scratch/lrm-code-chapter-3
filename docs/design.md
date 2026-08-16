@@ -1,6 +1,6 @@
 # Chapter 3 Software Design
 
-> **Superseded by v5**: the shipped backbone is `VLABackbone` (the v3 name, kept), language model is `SmolLM2-135M`, hidden width is **576** (the backbone's native width, no down-projection to 512), two cameras give **392** image tokens, and fusion is a token-level concatenation fed to the language backbone via `inputs_embeds` (concat migration 2026-08-09; the splice is retired) (the pretrained backbone is the fuser; `fusion_transformer.py` is only the optional separate-encoder exercise). Output contract: `[B, 392 + L + 1, 576]`. The APIs below are corrected for the load-bearing facts; some prose still reflects the older single-camera / separate-fusion plan.
+> **Superseded by v5**: the shipped backbone is `VLABackbone` (the v3 name, kept), language model is `SmolLM2-135M`, hidden width is **576** (the language backbone's native width, no down-projection to 512), two cameras give **392** visual positions, and fusion is direct concatenation of the visual, language, and state input embeddings into one observation prefix fed to the language backbone via `inputs_embeds` (concat migration 2026-08-09). The language backbone is the fuser; `fusion_transformer.py` is only the optional separate-encoder exercise. Output contract: `[B, 392 + L + 1, 576]` contextualized hidden states. The APIs below are corrected for the load-bearing facts; some prose still reflects the older single-camera / separate-fusion plan.
 
 Companion to `chapter_3_plan.md`. The plan locks the *what* — listings, exports, prose mapping. This doc locks the *how* — module APIs, notebook architecture, test strategy, dependency pinning, agent prompt.
 
@@ -20,9 +20,9 @@ Two paths, same end state — the reader runs `notebooks/ch03.ipynb` against the
 
 ### Notebook ↔ package
 
-**Type-along** listings (vision encoder, language backbone, state encoder, fusion transformer, VLA backbone) live in the notebook namespace — the reader writes them, subsequent cells call their version. A byte-for-byte equivalent exists in `src/ch03/<module>.py` but is independent (no live binding) and serves tests, Ch 4 imports, and editor cross-reference.
+**Type-along** listings (vision encoder, language backbone embeddings, state encoder, VLA backbone) live in the notebook namespace — the reader writes them, subsequent cells call their version. A byte-for-byte equivalent exists in `src/ch03/<module>.py` but is independent (no live binding) and serves tests, Ch 4 imports, and editor cross-reference.
 
-**Provided utility** listings (patch self-similarity viz, tracking viz) are one-line imports from the package.
+**Provided utility** listings (patch self-similarity viz, plus the bonus tracking grid) are one-line imports from the package.
 
 ### Figures
 
@@ -43,16 +43,20 @@ from ch03.vla_backbone import VLABackbone
 from ch03.vision_encoder import VisionEncoder
 from ch03.language_backbone import LanguageBackbone
 from ch03.state_encoder import StateEncoder
-from ch03.fusion_transformer import FusionTransformer  # optional exercise only
+from ch03.preprocess import preprocess_image
+from ch03.sample import load_sample
 
 __all__ = [
     "VLABackbone",
     "VisionEncoder",
     "LanguageBackbone",
     "StateEncoder",
-    "FusionTransformer",
+    "preprocess_image",
+    "load_sample",
 ]
 ```
+
+`FusionTransformer` is off the main path, so it is not re-exported; the optional exercise imports it from `ch03.fusion_transformer` directly.
 
 ### `src/ch03/vision_encoder.py` (listing 3.1)
 
@@ -74,7 +78,7 @@ class VisionEncoder(nn.Module):
 
 SigLIP weights frozen via `requires_grad = False`. Single `nn.Linear(768, 576)` projection trainable.
 
-### `src/ch03/viz_similarity.py` (listings 3.2 and 3.7)
+### `src/ch03/viz_similarity.py` (listing 3.2, plus a bonus grid)
 
 Patch self-similarity on the raw frozen SigLIP features (chosen over
 attention rollout per the 2026-06-15 deep-research verdict: rollout has
@@ -88,11 +92,11 @@ def patch_self_similarity(
 
 def similarity_grid(          # listing 3.2 / figure 3.3
     vision_encoder, image,    # [3, H, W] in [0, 1]
-    queries,                  # list of (row, col, label), e.g. cube + arm
+    queries,                  # list of (row, col, label), e.g. brick + arm
     save_path=None,
 ) -> matplotlib.figure.Figure: ...
 
-def tracking_grid(            # listing 3.7 / figure 3.6
+def tracking_grid(            # bonus notebook visualization
     vision_encoder, frames,   # list of [3, H, W]
     queries,                  # one (row, col) per frame; the object moves
     labels=None, save_path=None,
@@ -106,8 +110,7 @@ class LanguageBackbone(nn.Module):
     def __init__(
         self,
         model_name: str = "HuggingFaceTB/SmolLM2-135M",
-        hidden_dim: int = 576,
-    ) -> None: ...
+    ) -> None: ...   # width is SmolLM2's native 576, not configurable
 
     def tokenize(
         self,
@@ -122,7 +125,7 @@ class LanguageBackbone(nn.Module):
         ...
 ```
 
-**No vocab expansion** — uses native SmolLM tokenizer (49,152 vocab). Vocab expansion is Chapter 4's first step.
+**No vocabulary expansion** — uses the native SmolLM tokenizer (49,152 vocab). The revised Chapter 4 contract does not expand it either: action architectures attach their own components instead.
 
 ### `src/ch03/state_encoder.py` (listing 3.4)
 
@@ -131,7 +134,7 @@ class StateEncoder(nn.Module):
     def __init__(
         self,
         state_dim: int = 6,  # SO-100: 5 arm joints + 1 gripper (per Ch 2)
-        hidden_dim: int = 576,
+        width: int = 576,
     ) -> None: ...
 
     def forward(
@@ -145,7 +148,7 @@ class StateEncoder(nn.Module):
 
 ### `src/ch03/fusion_transformer.py` (optional separate-encoder exercise)
 
-> Off the main path. The shipped backbone fuses via token-level splice; this module is kept only as the optional separate-encoder fusion exercise.
+> Off the main path. The shipped backbone fuses by direct concatenation; this module is kept only as the optional separate-encoder fusion exercise.
 
 ```python
 class FusionTransformer(nn.Module):
@@ -169,43 +172,53 @@ Causal self-attention via upper-triangular mask. Pre-norm.
 
 ### `src/ch03/vla_backbone.py` (listing 3.6)
 
-Fusion is a token-level splice: image and state tokens are written into the language backbone's own input-embedding stream via `masked_scatter`, so the pretrained backbone is the fuser (no separate fusion module on the main path). The backbone grows its input embedding table by two inert placeholder rows for the image and state splice markers - this is NOT `resize_token_embeddings`; the tokenizer is untouched and `config.vocab_size` stays 49152.
+Fusion is direct concatenation: the visual and state input embeddings are concatenated with the language input embeddings looked up from SmolLM2's own table, forming the observation prefix that the language backbone reads through `inputs_embeds`. The pretrained language backbone is the fuser (no separate fusion module on the main path). Only the language stream carries vocabulary IDs, so the tokenizer, the embedding table (49,152 rows), and `config.vocab_size` are all untouched.
 
 Two things the backbone deliberately does NOT own, because owning them once is the point:
 
-- **The vision path.** `self.vision_encoder = VisionEncoder(hidden_dim=576)` composes listing 3.1's encoder as-is. Frozen SigLIP, the 768->576 projection, and the `[0,1]`->`[-1,1]` pixel normalization buffers all live in `vision_encoder.py`. `forward` calls it once and gets `[B*2, 196, 576]` back already projected, so there is no `img_proj` on the backbone.
-- **A second embedding table.** After growing the table, `self.language_backbone.set_input_embeddings(self.embed_tokens)` hands it back, so the model holds one table. Keeping the language backbone's original alongside it would add 28,311,552 trainable parameters (49,152 x 576) that `forward` never reads, because it passes `inputs_embeds`. Measured: 135,295,488 trainable / 92,884,224 frozen. `tests/test_vla_backbone.py` guards both with an identity check and a `< 140_000_000` trainable budget.
+- **The vision path.** `self.vision_encoder = VisionEncoder(hidden_dim=576)` composes listing 3.1's encoder as-is. Frozen SigLIP, the bicubic antialiased resize to 224, the 768->576 projection, and the `[0,1]`->`[-1,1]` pixel normalization buffers all live in `vision_encoder.py`. `embed_inputs` calls it once and gets `[B*2, 196, 576]` back already projected, so there is no `img_proj` on the backbone.
+- **A second embedding table.** The language stream is embedded through `self.language_backbone.get_input_embeddings()`, so the model holds exactly one table, the native one. Measured: 135,294,336 trainable / 92,884,224 frozen. `tests/test_vla_backbone.py` guards the layout with a per-position identity check and a `< 140_000_000` trainable budget.
 
 ```python
 class VLABackbone(nn.Module):
-    def __init__(self) -> None: ...   # hidden width 576 (backbone native)
+    def __init__(self) -> None: ...  # width 576 (language-backbone native)
 
-    def tokenize_instruction(
+    def embed_inputs(
         self,
-        instruction: str,
-    ) -> list[int]:                  # L native SmolLM2 text ids
+        images: torch.Tensor,        # [B, 2, 3, H, W] in [0, 1]
+        input_ids: torch.Tensor,     # [B, L] HF text ids (pad = eos)
+        state: torch.Tensor,         # [B, state_dim]
+        text_attention_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        ...  # (input_embeddings [B,N,576], attention_mask, position_ids)
 
-    def build_sequence_ids(
+    def contextualize(
         self,
-        text_ids: list[int],
-    ) -> list[int]:                  # image + text + state template
+        input_embeddings: torch.Tensor,   # [B, N, 576]
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.Tensor | None = None,
+    ) -> torch.Tensor:               # [B, N, 576] hidden states
 
     def forward(
         self,
-        images: torch.Tensor,        # [B, 2, 3, 224, 224] two cameras
-        sequence_ids: torch.Tensor,  # [B, N] from build_sequence_ids
-        state: torch.Tensor,         # [B, state_dim]
+        images: torch.Tensor,
+        input_ids: torch.Tensor,
+        state: torch.Tensor,
+        text_attention_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:               # [B, 392 + L + 1, 576]
         ...
 ```
 
-**Frozen export contract for Chapter 4.** Do not rename, do not change signature.
+Position IDs are derived from the attention mask (`cumsum - 1`) rather than from the physical index, so padded instruction slots never shift the state position's rotary index: it is `392 + L_valid` in every row.
 
-### Listing 3.7 / figure 3.6 — `tracking_grid` (in `viz_similarity.py`)
+**Frozen export contract for Chapter 4.** Do not rename, do not change these three signatures.
 
-`tracking_grid` (signature above) runs patch self-similarity on the cube
-query in several frames where the cube spawns in different positions; the
-highlight tracks the object. Lineage: this replaced the v4 prompted-
+### `tracking_grid` (in `viz_similarity.py`) — bonus visualization
+
+`tracking_grid` (signature above) runs patch self-similarity on the brick
+query in several frames where the brick sits in different positions; the
+highlight tracks the object. It is a notebook bonus, not a numbered
+chapter listing or figure. Lineage: this replaced the v4 prompted-
 attention figure (could not reproduce on an untrained causal backbone),
 then the v5 object-attention rollout (blurry on a CLS-less encoder per
 the deep-research verdict). The "language doesn't steer vision yet" point
@@ -215,12 +228,12 @@ stays in prose. No `output_attentions`/eager needed.
 
 ```python
 def preprocess_image(
-    image: torch.Tensor,  # raw from Ch 2 dataloader, already [3, 224, 224] float in [0, 1]
-) -> torch.Tensor:  # [3, 224, 224] (passthrough or minimal adjustment)
+    image: torch.Tensor,  # [3, H, W] or [B, 3, H, W] float in [0, 1]
+) -> torch.Tensor:        # same rank, spatial dims 224 x 224
     ...
 ```
 
-Likely a near-passthrough — Ch 2's `make_pickplace_dataloader` already yields `[3, 224, 224]` float images scaled to `[0, 1]`. This module exists to centralize any per-model normalization SigLIP might need (e.g., ImageNet mean/std).
+Ch 2's `make_pickplace_dataloader` yields `[3, 480, 640]` float frames in `[0, 1]`, so this resizes to SigLIP's `224 x 224` with `mode="bicubic"`, `align_corners=False`, `antialias=True` — the resampling the pinned SigLIP image processor uses. This is the chapter's only resize: `VisionEncoder.siglip_features` calls this helper for frames that are not already 224, so the probe path and the encoder path cannot drift apart, and `tests/test_preprocess.py` pins both facts. SigLIP's `[-1, 1]` normalization stays inside `VisionEncoder`.
 
 ---
 
@@ -240,8 +253,8 @@ Within each section:
 
 | Role | Notebook cell contents |
 |---|---|
-| Type-along (3.1, 3.3, 3.4, 3.5, 3.6) | Full code from the book listing, inline |
-| Provided utility (3.2, 3.7) | `from ch03.viz_similarity import ...` + a usage call |
+| Type-along (3.1, 3.3, 3.4, 3.5, 3.6, 3.7) | Full code from the book listing, inline |
+| Provided utility (3.2) | `from ch03.viz_similarity import ...` + a usage call |
 
 ### Figure conventions
 
@@ -252,7 +265,7 @@ fig = plot_X(...)
 fig.savefig("../figures/figure_3_<n>_<slug>.png", dpi=300, bbox_inches="tight")
 ```
 
-Figure 3.1 is reused from Chapter 1's roadmap recap — no code cell.
+Figures 3.1 and 3.7 are diagrams, not rendered outputs — no code cell.
 
 ### Reproducibility
 
@@ -274,22 +287,28 @@ Figure 3.1 is reused from Chapter 1's roadmap recap — no code cell.
 tests/
 ├── conftest.py            # shared fixtures (dummy tensors, mock dataloader output)
 ├── test_smoke.py          # ch03 imports cleanly
+├── test_preprocess.py     # shapes + bicubic/antialias parity + one shared resize
 ├── test_vision_encoder.py # frozen-param + shape + dtype
 ├── test_language_backbone.py # tokenize + forward shape + vocab size assertion
 ├── test_state_encoder.py  # shape + nonlinearity smoke
 ├── test_fusion_transformer.py # mask shape + causality + grad flow
-└── test_vla_backbone.py   # integration: dummy batch → expected output shape
+├── test_viz_similarity.py # probe helper shapes + query indexing
+├── test_guardrails.py     # source scan: no add_tokens / resize_token_embeddings / masked_scatter
+├── test_migration_parity.py # pins the retired construction against the shipped one
+├── test_sample.py         # the shipped real sample loads and runs
+└── test_vla_backbone.py   # observation prefix, mask, position ids, padded batches, forward
 ```
 
 ### Coverage by module
 
 | Module | Approach |
 |---|---|
+| `preprocess.py` | Shapes for single and batched frames, values stay in `[0, 1]`, the resize equals bicubic + `align_corners=False` + `antialias=True` exactly and differs from bilinear or non-antialiased variants, and `VisionEncoder`'s internal resize is the same implementation (identity check on the imported helper, plus feature-level equality between native and pre-resized frames) |
 | `vision_encoder.py` | Assert all SigLIP params have `requires_grad=False`, output shape `[2, 196, 576]` per camera, dtype `float32` |
 | `language_backbone.py` | Assert vocab size == 49,152 (catches silent SmolLM revisions), tokenize+forward shape, projection trainable |
 | `state_encoder.py` | Shape `[B, state_dim] → [B, 1, 576]`, GELU nonlinearity present |
 | `fusion_transformer.py` | Causal mask is upper-triangular `-inf`, output shape == input shape, gradient flows (optional exercise module) |
-| `vla_backbone.py` | End-to-end forward on dummy batch returns `[B, 392+L+1, 576]`; integration-marked |
+| `vla_backbone.py` | `embed_inputs` returns `(input_embeddings, attention_mask, position_ids)` with every vector at the right observation-prefix position, padded batches keep the state position's logical index at `392 + L_valid`, and the ordinary `forward` returns `[B, 392+L+1, 576]`; integration-marked |
 
 ### Fixtures (`conftest.py`)
 
@@ -354,7 +373,7 @@ dev = [
 ```
 
 Pins:
-- **`transformers>=4.45`** — vocab expansion APIs stable in 4.45+; SigLIP-base+SmolLM2-135M both supported
+- **`transformers>=4.45`** — SigLIP-base and SmolLM2-135M both supported, and the `inputs_embeds` + `position_ids` path behaves consistently
 - **`lerobot==0.5.1`** — matches Ch 2 hand-off contract
 - **`torch>=2.1`** — matches Ch 2
 

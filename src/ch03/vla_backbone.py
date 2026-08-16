@@ -1,4 +1,4 @@
-"""VLA backbone: vision, language, and state fused in one sequence.
+"""VLA backbone: vision, language, and state in one sequence.
 
 This is the chapter's deliverable and the interface Chapter 4 builds
 on. ``VLABackbone`` encodes each input stream to the language
@@ -6,7 +6,7 @@ backbone's width and concatenates the streams into one multimodal
 sequence, which the pretrained SmolLM2 contextualizes. There is no
 separate fusion transformer: the language backbone is the fuser.
 
-The fixed sequence order is
+The fixed observation-prefix order is
 
     [image (392), text/language (L), state (1)]
 
@@ -35,13 +35,13 @@ Padding: batched instructions of different lengths are padded by the
 tokenizer (``pad_token`` reuses SmolLM2's end-of-text token, adding no
 vocabulary entry). Because the state embedding sits after the padded
 text block, position ids are derived from the attention mask so padded
-slots never shift the state token's rotary position.
+slots never shift the state position's rotary index.
 
 Do not rename ``VLABackbone`` or change the ``embed_inputs`` /
 ``contextualize`` / ``forward`` signatures: they are the contract
 Chapter 4 reads from. ``input_ids`` here is Hugging Face's own
-tokenizer output (text only, ``[B, L]``); the fused layout is built
-internally.
+tokenizer output (text only, ``[B, L]``); the observation prefix is
+assembled internally.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ IMAGE_TOKENS = NUM_CAMERAS * NUM_PATCHES  # 392 = 2 x 196
 
 
 class VLABackbone(nn.Module):
-    """Fuse vision, language, and state in the backbone's own stream."""
+    """Encode vision, language, and state into one input sequence."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -111,7 +111,7 @@ class VLABackbone(nn.Module):
         B = images.shape[0]
         image_embeddings = self.vision_encoder(
             images.flatten(0, 1)
-        ).reshape(B, IMAGE_TOKENS, SMOLLM_WIDTH)  # cam0 then cam1
+        ).reshape(B, IMAGE_TOKENS, SMOLLM_WIDTH)  # overhead then side
         text_embeddings = embed_tokens(input_ids)  # [B, L, 576]
         state_embedding = self.state_encoder(state)  # [B, 1, 576]
 
@@ -143,7 +143,7 @@ class VLABackbone(nn.Module):
 
         # Padded text slots sit between the text block and the state
         # embedding, so positions must be counted over VALID slots
-        # only: the state token's rotary position is 392 + L_valid for
+        # only: the state position's rotary index is 392 + L_valid for
         # every row, however much padding the batch carries. The
         # stock Llama path would instead number positions by physical
         # index, padding included.
@@ -182,7 +182,10 @@ class VLABackbone(nn.Module):
         """Encode, concatenate, and contextualize one observation.
 
         Returns ``[B, 392 + L + 1, 576]`` contextualized hidden
-        states, the representation an action head reads.
+        states. They are the representation Chapter 4's action
+        architectures build on: a head may read one or more of these
+        positions, or it may extend the observation prefix through
+        ``embed_inputs`` and ``contextualize`` instead.
         """
         embeddings, mask, position_ids = self.embed_inputs(
             images, input_ids, state, text_attention_mask

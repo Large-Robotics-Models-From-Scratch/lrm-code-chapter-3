@@ -1,9 +1,9 @@
-"""State encoder: the robot's proprioception as a single token.
+"""State encoder: the robot's proprioception as a single embedding.
 
 The SO-101 reports a 6-dim proprioceptive state vector (five arm joint
 positions plus the gripper position). A two-layer MLP lifts those six
-numbers into one 576-dim token that sits alongside the image and
-language tokens in the fused sequence.
+numbers into one 576-dim state embedding that occupies the state position
+alongside the visual and language positions in the observation prefix.
 
 Going from 6 dims up to 576 benefits from a nonlinearity in the middle,
 so this is a ``Linear -> GELU -> Linear`` MLP rather than a single
@@ -19,7 +19,7 @@ STATE_DIM = 6
 
 
 class StateEncoder(nn.Module):
-    """Project ``[B, state_dim]`` state to one ``[B, 1, 576]`` token."""
+    """Project ``[B, state_dim]`` state to a ``[B, 1, 576]`` embedding."""
 
     def __init__(
         self,
@@ -34,7 +34,7 @@ class StateEncoder(nn.Module):
         )
 
     def forward(self, state: torch.Tensor) -> torch.Tensor:
-        """Encode ``[B, state_dim]`` to one ``[B, 1, 576]`` state token.
+        """Encode ``[B, state_dim]`` to one ``[B, 1, 576]`` state embedding.
 
         The ``unsqueeze(1)`` adds the sequence dimension, so the
         output concatenates directly with the ``[B, 392, 576]`` image

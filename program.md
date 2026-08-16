@@ -10,7 +10,7 @@ Read this end-to-end before writing any Python.
 
 | Input | Where | Role |
 |---|---|---|
-| **Chapter plan** | `docs/chapter_3_plan.md` (synced with `../lrm-book/chapter_3/chapter_3_structure_and_plan.md`) | The *what*. 8 listings, 7 figures, 5 concept boxes, the Ch3→Ch4 export contract. |
+| **Chapter plan** | `docs/chapter_3_plan.md` (synced with `../lrm-book/chapter_3/chapter_3_structure_and_plan.md`) | The *what*. 7 listings, 7 figures, 5 concept boxes, the Ch3→Ch4 export contract. |
 | **Agent toolkit** | `../lrm-code-agents/` | The *check*. Code agents (style-check, listing-check, chapter-continuity, test-gen, resource-check) + (coming) prose agents. |
 | **Style guide** | `docs/MANNING_STYLE.md` + `../lrm-book/STYLEGUIDE.md` | The *how*. Manning conventions — annotations, line widths, banned words, code style. |
 | **Ch 2 export contract** | `from ch02 import make_pickplace_dataloader, normalize, denormalize` (Sid's repo) | The *upstream*. Frozen interface; do not modify. |
@@ -58,7 +58,7 @@ This repo follows the **Raschka-style hybrid model** used across Manning's "from
 
 Every listing has a home in **both** artifacts.
 
-For each of the 8 listings in `docs/chapter_3_plan.md`, in order:
+For each of the 7 listings in `docs/chapter_3_plan.md`, in order:
 
 1. **Read the listing spec** in `docs/chapter_3_plan.md`.
 2. **Locate the module**:
@@ -67,11 +67,11 @@ For each of the 8 listings in `docs/chapter_3_plan.md`, in order:
    |---|---|---|
    | 3.1 | `src/ch03/vision_encoder.py` (SigLIP load + freeze + project) | type-along |
    | 3.2 | `src/ch03/viz_similarity.py` (patch self-similarity) | provided utility |
-   | 3.3 | `src/ch03/language_backbone.py` (SmolLM2, no vocab expansion) | type-along |
+   | 3.3 | `src/ch03/language_backbone.py` (SmolLM2, no vocabulary expansion) | type-along |
    | 3.4 | `src/ch03/state_encoder.py` (6-dim -> 576 MLP) | type-along |
-   | 3.5 | `src/ch03/vla_backbone.py` (`embed_inputs`: concat the three streams + mask + position ids) | type-along |
+   | 3.5 | `src/ch03/vla_backbone.py` (`embed_inputs`: concatenate the three streams + attention mask + position IDs) | type-along |
    | 3.6 | `src/ch03/vla_backbone.py` (`contextualize` + `forward`: run SmolLM2 via inputs_embeds) | type-along |
-   | 3.7 | `tests/` (definition-of-done verification: shapes, splice, no vocab change) | verification |
+   | 3.7 | `tests/` (definition-of-done verification: shapes, observation-prefix order, no vocabulary change) | verification |
 
 3. **Mirror in the notebook**.
 4. **Write the code** matching the plan exactly: same variable names, same annotations, same line ordering.
@@ -85,14 +85,14 @@ For each of the 8 listings in `docs/chapter_3_plan.md`, in order:
 
 ## 4. The Export Contract
 
-`VLABackbone.forward(images, sequence_ids, state) -> [B, 392 + L + 1, 576]` is the **frozen interface** between Ch 3 and Ch 4. Signature specified in `docs/chapter_3_plan.md` "Hand-off contract to chapter 4" and in `ARCHITECTURE_LOG.md`.
+`VLABackbone.forward(images, input_ids, state, text_attention_mask=None) -> [B, 392 + L + 1, 576]` is the **frozen interface** between Ch 3 and Ch 4. Signature specified in `docs/chapter_3_plan.md` "Hand-off contract to chapter 4" and in `ARCHITECTURE_LOG.md`.
 
 **Implications:**
-- Do not rename `VLABackbone` or change the `embed_inputs` / `contextualize` / `forward` signatures. `input_ids` is HF's text-only tokenizer output; the fused layout is built internally. **Ch 4's repo must adopt the 3-tuple `embed_inputs` contract (2026-08-09 concat migration).**
-- `images` is `[B, 2, 3, H, W]` in `[0, 1]` (two cameras; resized internally); `input_ids` is `[B, L]` text ids (pad = eos); the fused order is image + text + state, length `N = 392 + L + 1`; `state` is `[B, 6]`.
-- The output tensor shape is part of the contract - Ch 4 reads the rightmost K positions.
-- The tokenizer is SmolLM2's native (49,152 vocab) - vocab expansion belongs to Ch 4. The backbone grows its input embeddings by two inert splice-marker rows, which leaves `config.vocab_size` at 49,152.
-- Reverse-check enforced via `chapter-continuity` agent: no `add_tokens` or `resize_token_embeddings` in Ch 3 code.
+- Do not rename `VLABackbone` or change the `embed_inputs` / `contextualize` / `forward` signatures. `input_ids` is HF's text-only tokenizer output; the observation prefix is assembled internally. **Ch 4's repo must adopt the 3-tuple `embed_inputs` contract (2026-08-09 concat migration).**
+- `images` is `[B, 2, 3, H, W]` in `[0, 1]` (two cameras, overhead then side; resized internally); `input_ids` is `[B, L]` text IDs (pad = eos); the observation-prefix order is image + text + state, length `N = 392 + L + 1`; `state` is `[B, 6]`.
+- The output tensor shape is part of the contract. Ch 4 either reads contextualized hidden states from it or extends the observation prefix between `embed_inputs` and `contextualize`.
+- The tokenizer is SmolLM2's native (49,152 vocab) and is never expanded: only the language stream carries vocabulary IDs, the image and state streams enter as vectors, so the embedding table keeps its 49,152 rows and `config.vocab_size` stays 49,152. The revised Ch 4 contract does not expand it either.
+- Reverse-check enforced via `chapter-continuity` agent and `tests/test_guardrails.py`: no `add_tokens`, `resize_token_embeddings`, or `masked_scatter` in Ch 3 source.
 
 When implementation reveals a problem with this interface, update the plan in `docs/chapter_3_plan.md` *and* `../lrm-book/chapter_3/chapter_3_structure_and_plan.md` *together*, in the same commit.
 
@@ -102,7 +102,7 @@ Run `chapter-continuity` after any change to the export surface.
 
 ## 5. Figures
 
-The chapter plan lists 6 figures (3.1-3.6). Figure 3.1 is the book-wide roadmap recap with the Chapter 3 stage highlighted — reuse the figure-1.7 source rather than re-rendering. The other five are produced inside `notebooks/ch03.ipynb` using helper functions in `src/ch03/viz_similarity.py`, exported to `figures/` for the chapter draft.
+The chapter plan lists 7 figures (3.1-3.7). Figure 3.1 is the generic VLA-backbone map (modality-specific encoders, common-width input embeddings, one multimodal sequence, the language backbone, contextualized hidden states) and Figure 3.7 is the concrete implementation recap; both are diagrams rather than rendered outputs. The data-driven figures are produced inside `notebooks/ch03.ipynb` using helper functions in `src/ch03/viz_similarity.py`, exported to `figures/` for the chapter draft.
 
 For each figure:
 - The plotting helper lives in `src/ch03/` so it is importable and testable
@@ -129,9 +129,9 @@ A module is done when:
 - [ ] `resource-check` flags no critical issues
 
 The chapter is done when:
-- [ ] All 8 listings implemented in `src/ch03/` and validated
+- [ ] All 7 listings implemented in `src/ch03/` and validated
 - [ ] `notebooks/ch03.ipynb` runs top-to-bottom from a fresh kernel
-- [ ] All 6 figures rendered and saved to `figures/`
+- [ ] All 7 figures rendered and saved to `figures/`
 - [ ] `agents/chapter-03-guide.md` listing roadmap matches `docs/chapter_3_plan.md`
 - [ ] `chapter-continuity` confirms the Ch 4 export is stable
 - [ ] A full check pass (all 5 author agents) reports clean at ERROR severity

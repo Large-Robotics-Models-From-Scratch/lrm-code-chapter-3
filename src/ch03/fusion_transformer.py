@@ -2,17 +2,17 @@
 
 This module is the exercise-only separate-encoder fuser. It is not part
 of the chapter's main path and is not imported by the main backbone; it
-exists for optional exercise 3.4, where the reader bolts a from-scratch
-fusion Transformer onto the frozen streams and compares it against the
-token-level fusion the chapter ships.
+exists for the chapter's optional fusion exercise, where the reader
+bolts a from-scratch fusion Transformer onto the frozen streams and
+compares it against the direct concatenation the chapter ships.
 
 In separate-encoder fusion each stream is encoded on its own and a
-dedicated module attends over the concatenated image, language, and
-state tokens. This module is that dedicated fuser: a stack of pre-norm
-self-attention blocks that mixes the three streams into a single
-contextualized sequence.
+dedicated module attends over the concatenated visual, language, and
+state input embeddings. This module is that dedicated fuser: a stack of
+pre-norm self-attention blocks that mixes the three streams into one
+sequence of contextualized hidden states.
 
-Attention is causal (each token attends only to itself and earlier
+Attention is causal (each position attends only to itself and earlier
 positions), matching the VLA backbone so the comparison is like for
 like and Chapter 4's autoregressive action prediction drops on
 without architecture surgery.
@@ -72,7 +72,7 @@ class FusionBlock(nn.Module):
 
 
 class FusionTransformer(nn.Module):
-    """A causal pre-norm transformer over the fused token sequence."""
+    """A causal pre-norm transformer over the concatenated sequence."""
 
     def __init__(
         self,
