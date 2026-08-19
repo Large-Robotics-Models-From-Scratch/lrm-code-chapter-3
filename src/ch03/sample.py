@@ -8,7 +8,8 @@ FFmpeg. So that the chapter never has to demonstrate the backbone on
 ``torch.rand`` noise, one real frame pair from
 ``lerobot/svla_so101_pickplace`` travels with the package: the two camera
 views as lossless PNGs, plus the z-scored 6-dim state and the episode's
-task string in ``assets/sample.json``.
+task string in ``assets/sample.json``. That metadata also records the
+dataset revision and source episode, frame, and timestamp for this sample.
 
 The PNGs hold the exact uint8 pixels the dataloader decodes, so dividing
 by 255 reproduces the dataloader's ``[0, 1]`` float32 frames bit for bit.

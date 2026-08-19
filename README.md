@@ -32,6 +32,10 @@ images, state, instruction = load_sample()
 # instruction: "pink lego brick into the transparent box"
 ```
 
+Its `assets/sample.json` records the dataset revision plus source episode,
+frame, and timestamp, while `load_sample()` keeps this three-value return
+contract.
+
 ## Locked architecture (Ch 3 plan v5)
 
 | Component | Choice |

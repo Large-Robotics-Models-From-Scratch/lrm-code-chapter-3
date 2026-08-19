@@ -23,15 +23,11 @@ NUM_PATCHES = 196
 
 
 class VisionEncoder(nn.Module):
-    """Frozen SigLIP patch encoder with a 768 to 576 projection."""
+    """Pinned frozen SigLIP patch encoder with a trainable projection."""
 
-    def __init__(
-        self,
-        model_name: str = SIGLIP_MODEL,
-        hidden_dim: int = 576,
-    ) -> None:
+    def __init__(self, hidden_dim: int = 576) -> None:
         super().__init__()
-        self.siglip = SiglipVisionModel.from_pretrained(model_name)
+        self.siglip = SiglipVisionModel.from_pretrained(SIGLIP_MODEL)
         self.siglip.eval()  # frozen: never run dropout, even under .train()
         for param in self.siglip.parameters():
             param.requires_grad = False

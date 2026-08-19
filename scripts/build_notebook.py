@@ -129,9 +129,9 @@ md("""
 Pick one patch and measure cosine similarity between its frozen SigLIP
 feature and every other patch. Querying a brick patch lights up the brick;
 querying an arm patch lights up the arm. The frozen encoder already
-groups object regions, with no training. The grid is 14x14, and the two
-queries below are the brick's cell and the arm's cell in this frame; on
-a different frame, pick the cells the brick and the arm land in there.
+groups object regions, with no training. The grid is 14x14, and the three
+queries below mark the brick, arm, and tabletop in this frame; on a
+different frame, pick the cells those regions land in there.
 """)
 
 code("""
@@ -140,7 +140,12 @@ from ch03.viz_similarity import similarity_grid
 fig_3_3 = similarity_grid(            # Figure 3.3
     vision_encoder,
     up,
-    [(11, 4, "brick query"), (5, 7, "arm query")],
+    [
+        (11, 4, "brick query patch"),
+        (5, 6, "arm query patch"),
+        (12, 8, "tabletop query patch"),
+    ],
+    similarity_range=(-0.1, 1.0),
 )
 """)
 

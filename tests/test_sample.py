@@ -5,10 +5,13 @@ test runs the assembled backbone on the real sample, so it is marked
 integration like the rest of the backbone suite.
 """
 
+import json
+
 import pytest
 import torch
 
 from ch03 import VLABackbone, load_sample
+from ch03.sample import ASSETS, METADATA
 from ch03.vla_backbone import IMAGE_TOKENS, SMOLLM_WIDTH
 
 INSTRUCTION = "pink lego brick into the transparent box"
@@ -36,6 +39,22 @@ def test_load_sample_is_a_real_frame_pair():
     # The PNGs are lossless uint8, so every value is an exact k/255.
     quantized = images * 255
     assert torch.equal(quantized, quantized.round())
+
+
+def test_sample_metadata_records_reproducible_frame_provenance():
+    metadata = json.loads((ASSETS / METADATA).read_text())
+
+    assert {
+        "episode_index": metadata["episode_index"],
+        "frame_index": metadata["frame_index"],
+        "timestamp_seconds": metadata["timestamp_seconds"],
+        "dataset_revision": metadata["dataset_revision"],
+    } == {
+        "episode_index": 0,
+        "frame_index": 0,
+        "timestamp_seconds": 0.0,
+        "dataset_revision": "f641879e22172be7e8161d5e6c1503c2d2feb657",
+    }
 
 
 @pytest.mark.integration

@@ -62,11 +62,7 @@ __all__ = [
 
 ```python
 class VisionEncoder(nn.Module):
-    def __init__(
-        self,
-        model_name: str = "google/siglip-base-patch16-224",
-        hidden_dim: int = 576,
-    ) -> None: ...
+    def __init__(self, hidden_dim: int = 576) -> None: ...
 
     def forward(
         self,
@@ -92,8 +88,8 @@ def patch_self_similarity(
 
 def similarity_grid(          # listing 3.2 / figure 3.3
     vision_encoder, image,    # [3, H, W] in [0, 1]
-    queries,                  # list of (row, col, label), e.g. brick + arm
-    save_path=None,
+    queries,                  # list of (row, col, label)
+    save_path=None, similarity_range=(-0.1, 1.0),
 ) -> matplotlib.figure.Figure: ...
 
 def tracking_grid(            # bonus notebook visualization
