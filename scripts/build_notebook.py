@@ -383,6 +383,14 @@ states, or extends the observation prefix before contextualization, to
 train the first working policy.
 """)
 
+# Deterministic cell ids. nbformat mints a fresh uuid per cell on every
+# run, so without this the notebook shows a diff on every rebuild even
+# when nothing changed, and a genuinely stale notebook is invisible in
+# the noise. Rebuilding now produces a byte-identical file unless the
+# content actually moved.
+for index, cell in enumerate(cells):
+    cell["id"] = f"ch03-{index:02d}"
+
 nb["cells"] = cells
 nb["metadata"] = {
     "kernelspec": {
