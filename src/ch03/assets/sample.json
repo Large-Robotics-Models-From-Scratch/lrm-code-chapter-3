@@ -13,5 +13,9 @@
     "observation.images.up",
     "observation.images.side"
   ],
-  "dataset": "lerobot/svla_so101_pickplace"
+  "dataset": "lerobot/svla_so101_pickplace",
+  "episode_index": 0,
+  "frame_index": 0,
+  "timestamp_seconds": 0.0,
+  "dataset_revision": "f641879e22172be7e8161d5e6c1503c2d2feb657"
 }

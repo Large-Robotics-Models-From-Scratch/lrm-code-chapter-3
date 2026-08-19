@@ -1,31 +1,47 @@
-"""VLA backbone: vision, language, and state fused in one sequence.
+"""VLA backbone: vision, language, and state in one sequence.
 
-This is the chapter's deliverable and the frozen interface Chapter 4
-builds on. ``VLABackbone`` projects the two camera views into the
-language backbone's own token stream and lets the pretrained attention
-do the fusion. There is no separate fusion transformer: the language
-backbone is the fuser.
+This is the chapter's deliverable and the interface Chapter 4 builds
+on. ``VLABackbone`` encodes each input stream to the language
+backbone's width and concatenates the streams into one multimodal
+sequence, which the pretrained SmolLM2 contextualizes. There is no
+separate fusion transformer: the language backbone is the fuser.
 
-The image and state tokens are spliced into reserved placeholder rows of
-the backbone's input embeddings with ``masked_scatter``. The token order
-the template builds is
+The fixed observation-prefix order is
 
     [image (392), text/language (L), state (1)]
 
 so the contract Chapter 4 reads is ``[B, 392 + L + 1, 576]``.
 
-The backbone composes rather than rebuilds. The vision path is the
-``VisionEncoder`` of section 3.2, used as-is: frozen SigLIP, the 768 to
-576 projection, and SigLIP's ``[0, 1]`` to ``[-1, 1]`` pixel
-normalization all stay inside it. The grown input embedding table is
-handed back to the language backbone, so the whole model holds exactly
-one embedding table and one image projection.
+The backbone exposes two representation levels:
 
-Do not rename ``VLABackbone`` or change the ``forward`` signature
-``(images, sequence_ids, state)``: the ``[B, 392 + L + 1, 576]`` output
-is the contract Chapter 4 reads from. ``sequence_ids`` is OUR fused
-layout (image + text + state); it is distinct from Hugging Face's
-``input_ids``, which stay the tokenizer/model API name unchanged.
+- ``embed_inputs`` stops before SmolLM2's Transformer layers and
+  returns the multimodal input embeddings together with the attention
+  mask and position ids that describe them.
+- ``contextualize`` runs SmolLM2 over a prepared embedding sequence
+  through the ``inputs_embeds`` interface and returns contextualized
+  hidden states of the same shape.
+
+``forward`` chains the two. Downstream heads that only read hidden
+states call ``forward``; heads that extend the sequence with extra
+positions before the Transformer (Chapter 4's parallel action head)
+call ``embed_inputs`` and ``contextualize`` separately.
+
+Only the language stream carries vocabulary ids. The image and state
+streams enter as vectors straight from their encoders, so no
+placeholder ids and no embedding-table changes are needed; SmolLM2's
+tokenizer, embedding table, and ``config.vocab_size`` all stay native.
+
+Padding: batched instructions of different lengths are padded by the
+tokenizer (``pad_token`` reuses SmolLM2's end-of-text token, adding no
+vocabulary entry). Because the state embedding sits after the padded
+text block, position ids are derived from the attention mask so padded
+slots never shift the state position's rotary index.
+
+Do not rename ``VLABackbone`` or change the ``embed_inputs`` /
+``contextualize`` / ``forward`` signatures: they are the contract
+Chapter 4 reads from. ``input_ids`` here is Hugging Face's own
+tokenizer output (text only, ``[B, L]``); the observation prefix is
+assembled internally.
 """
 
 from __future__ import annotations
@@ -43,160 +59,135 @@ SMOLLM_WIDTH = 576
 NUM_CAMERAS = 2
 IMAGE_TOKENS = NUM_CAMERAS * NUM_PATCHES  # 392 = 2 x 196
 
-# Two placeholder ids, just past the native vocab, mark the rows the
-# splice overwrites. Their embeddings are never read (masked_scatter
-# replaces them before the backbone runs), so this is not the Chapter 4
-# vocabulary expansion: it reserves two inert splice markers, not real
-# tokens.
-DEFAULT_IMAGE_ID = SMOLLM_VOCAB
-DEFAULT_STATE_ID = SMOLLM_VOCAB + 1
-
 
 class VLABackbone(nn.Module):
-    """Fuse vision, language, and state in the backbone's own stream."""
+    """Encode vision, language, and state into one input sequence."""
 
-    def __init__(
-        self,
-        image_id: int = DEFAULT_IMAGE_ID,
-        state_id: int = DEFAULT_STATE_ID,
-    ) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        # The placeholder ids must sit past the native vocab (so they are
-        # reserved, not real tokens) and be distinct (so the two splices
-        # never collide).
-        if image_id < SMOLLM_VOCAB or state_id < SMOLLM_VOCAB:
-            raise ValueError(
-                f"placeholder ids must be reserved (>= {SMOLLM_VOCAB}); "
-                f"got image_id={image_id}, state_id={state_id}."
-            )
-        if image_id == state_id:
-            raise ValueError(
-                f"image_id and state_id must differ; both are {image_id}."
-            )
-        self.image_id = image_id
-        self.state_id = state_id
         # Listing 3.1's encoder, reused verbatim: frozen SigLIP, the
-        # 768 to 576 projection, and SigLIP's [0,1] -> [-1,1] pixel
-        # normalization all live inside it, so the backbone owns no
-        # second copy of any of them.
+        # 768 to 576 projection, the resize to 224, and SigLIP's
+        # [0,1] -> [-1,1] pixel normalization all live inside it, so
+        # the backbone owns no second copy of any of them.
         self.vision_encoder = VisionEncoder(hidden_dim=SMOLLM_WIDTH)
         self.state_encoder = StateEncoder(6, SMOLLM_WIDTH)
         self.tokenizer = AutoTokenizer.from_pretrained(SMOLLM_MODEL)
+        # SmolLM2 ships no dedicated padding token; reuse end-of-text.
+        # This maps an existing id, so the vocabulary does not grow.
+        self.tokenizer.pad_token = self.tokenizer.eos_token
         self.language_backbone = AutoModel.from_pretrained(SMOLLM_MODEL)
-        # Grow the input embedding table just far enough that both
-        # placeholder ids index validly. These rows are inert: the splice
-        # overwrites them before the backbone runs, so this is not the
-        # Chapter 4 vocabulary expansion (no new vocabulary, no tokenizer
-        # change). For the defaults this is SMOLLM_VOCAB + 2.
-        self.embed_tokens = self._grow_embeddings(
-            self.language_backbone.get_input_embeddings(),
-            max(image_id, state_id) + 1,
+
+    def embed_inputs(
+        self,
+        images: torch.Tensor,
+        input_ids: torch.Tensor,
+        state: torch.Tensor,
+        text_attention_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Build the multimodal input-embedding sequence.
+
+        ``images`` is ``[B, 2, 3, H, W]`` in ``[0, 1]`` (any spatial
+        size; the vision encoder resizes to 224); ``input_ids`` is the
+        tokenizer's text ids ``[B, L]``; ``state`` is ``[B, 6]``;
+        ``text_attention_mask`` marks real (1) vs padded (0) text
+        positions and defaults to all-real.
+
+        Returns ``(input_embeddings, attention_mask, position_ids)``,
+        each laid out as ``[image (392), text (L), state (1)]`` along
+        the sequence dimension, so downstream heads that extend the
+        sequence have everything they need.
+        """
+        if images.dim() != 5 or images.shape[1] != NUM_CAMERAS:
+            raise ValueError(
+                f"images must be [B, {NUM_CAMERAS}, 3, H, W]; got "
+                f"{tuple(images.shape)}."
+            )
+        embed_tokens = self.language_backbone.get_input_embeddings()
+        device = embed_tokens.weight.device
+        images = images.to(device)
+        input_ids = input_ids.to(device)
+        state = state.to(device)
+
+        B = images.shape[0]
+        image_embeddings = self.vision_encoder(
+            images.flatten(0, 1)
+        ).reshape(B, IMAGE_TOKENS, SMOLLM_WIDTH)  # overhead then side
+        text_embeddings = embed_tokens(input_ids)  # [B, L, 576]
+        state_embedding = self.state_encoder(state)  # [B, 1, 576]
+
+        dtype = text_embeddings.dtype
+        image_embeddings = image_embeddings.to(dtype=dtype)
+        state_embedding = state_embedding.to(dtype=dtype)
+
+        input_embeddings = torch.cat(
+            [image_embeddings, text_embeddings, state_embedding],
+            dim=1,
+        )  # [B, 392 + L + 1, 576]
+
+        if text_attention_mask is None:
+            text_attention_mask = torch.ones_like(input_ids)
+        else:
+            text_attention_mask = text_attention_mask.to(device)
+        image_mask = torch.ones(
+            B,
+            IMAGE_TOKENS,
+            device=device,
+            dtype=text_attention_mask.dtype,
         )
-        # Hand the grown table back so the model holds exactly ONE
-        # embedding table. Without this the language backbone would keep
-        # its original table as well, ~28M trainable parameters that
-        # forward never reads (it passes inputs_embeds). Swapping the
-        # table in directly, rather than through Hugging Face's
-        # token-resize helper, is what keeps config.vocab_size at 49152:
-        # the resize helper rewrites the config, and that number is a
-        # Chapter 3 invariant.
-        self.language_backbone.set_input_embeddings(self.embed_tokens)
-
-    @staticmethod
-    def _grow_embeddings(
-        embed: nn.Embedding, new_size: int
-    ) -> nn.Embedding:
-        """Copy an embedding table into a slightly larger one.
-
-        The new table inherits the source table's dtype and device.
-        ``nn.Embedding`` would otherwise default to float32 on the CPU,
-        and a backbone loaded in bfloat16 (what recent Transformers
-        releases do for SmolLM2) would then fail in ``forward`` with a
-        dtype mismatch.
-        """
-        if embed.num_embeddings >= new_size:
-            return embed
-        grown = nn.Embedding(
-            new_size,
-            embed.embedding_dim,
-            padding_idx=embed.padding_idx,
-            dtype=embed.weight.dtype,
-            device=embed.weight.device,
+        state_mask = torch.ones(
+            B, 1, device=device, dtype=text_attention_mask.dtype
         )
-        with torch.no_grad():
-            grown.weight[: embed.num_embeddings] = embed.weight
-        return grown
+        attention_mask = torch.cat(
+            [image_mask, text_attention_mask, state_mask], dim=1
+        )  # [B, 392 + L + 1]
 
-    def tokenize_instruction(self, instruction: str) -> list[int]:
-        """Return the L native SmolLM2 text ids for one instruction.
+        # Padded text slots sit between the text block and the state
+        # embedding, so positions must be counted over VALID slots
+        # only: the state position's rotary index is 392 + L_valid for
+        # every row, however much padding the batch carries. The
+        # stock Llama path would instead number positions by physical
+        # index, padding included.
+        position_ids = attention_mask.long().cumsum(dim=1) - 1
+        position_ids = position_ids.masked_fill(attention_mask == 0, 0)
 
-        HF's tokenizer hands back ``input_ids``; we pull the single
-        row out as a plain ``list[int]`` so ``build_sequence_ids`` can
-        splice the text between the image and state placeholders. No
-        padding or truncation here: callers building variable-L
-        batches pad the assembled ``sequence_ids`` rows themselves
-        (Chapter 4's collate does this).
+        return input_embeddings, attention_mask, position_ids
+
+    def contextualize(
+        self,
+        input_embeddings: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Run SmolLM2 over a prepared embedding sequence.
+
+        Takes ``[B, N, 576]`` input embeddings (plus the mask and
+        position ids that describe them) and returns contextualized
+        hidden states of the same shape. Vocabulary ids play no role
+        here: the backbone runs through ``inputs_embeds``.
         """
-        encoded = self.tokenizer(instruction, return_tensors="pt")
-        return encoded["input_ids"][0].tolist()
-
-    def build_sequence_ids(self, text_ids: list[int]) -> list[int]:
-        """Template one row: image (392) + text (L) + state (1).
-
-        The 392 image placeholder ids (196 for camera 0, then 196 for
-        camera 1) come first, then the tokenized text, then the single
-        state placeholder id, matching the ``392 + L + 1`` contract.
-        """
-        image_ids = [self.image_id] * IMAGE_TOKENS
-        state_ids = [self.state_id]
-        return image_ids + text_ids + state_ids
+        outputs = self.language_backbone(
+            inputs_embeds=input_embeddings,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+        )
+        return outputs.last_hidden_state
 
     def forward(
         self,
         images: torch.Tensor,
-        sequence_ids: torch.Tensor,
+        input_ids: torch.Tensor,
         state: torch.Tensor,
+        text_attention_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """Encode, splice, and run the backbone as an encoder.
+        """Encode, concatenate, and contextualize one observation.
 
-        ``images`` is ``[B, 2, 3, 224, 224]`` in ``[0, 1]``;
-        ``sequence_ids`` is ``[B, N]`` with 392 image-placeholder rows,
-        L text rows, and 1 state-placeholder row per the template
-        (N = 392 + L + 1); ``state`` is ``[B, 6]``. Returns
-        ``[B, 392 + L + 1, 576]`` hidden states.
+        Returns ``[B, 392 + L + 1, 576]`` contextualized hidden
+        states. They are the representation Chapter 4's action
+        architectures build on: a head may read one or more of these
+        positions, or it may extend the observation prefix through
+        ``embed_inputs`` and ``contextualize`` instead.
         """
-        B = images.shape[0]
-        patches = self.vision_encoder(
-            images.flatten(0, 1)
-        )  # [B*2, 196, 576] frozen SigLIP, already projected
-        img = patches.reshape(
-            B, -1, SMOLLM_WIDTH
-        )  # [B, 392, 576] cam0 then cam1
-        emb = self.embed_tokens(sequence_ids)  # [B, N, 576]
-        img = img.to(emb.dtype)
-        state_tok = self.state_encoder(state).to(emb.dtype)
-        img_mask = (sequence_ids == self.image_id).unsqueeze(-1)
-        st_mask = (sequence_ids == self.state_id).unsqueeze(-1)
-        # Guard the splice (repo hardening; the book listing omits
-        # it): masked_scatter fills only as many slots as the mask
-        # has True positions, so a template with the wrong number of
-        # placeholders would silently drop part of img/state_tok yet
-        # still return the expected shape.
-        img_counts = img_mask.sum(dim=(1, 2))
-        if not bool((img_counts == IMAGE_TOKENS).all()):
-            raise ValueError(
-                f"every sequence_ids row needs exactly {IMAGE_TOKENS} "
-                f"image placeholders (id {self.image_id}); got "
-                f"{img_counts.tolist()}."
-            )
-        st_counts = st_mask.sum(dim=(1, 2))
-        if not bool((st_counts == 1).all()):
-            raise ValueError(
-                f"every sequence_ids row needs exactly 1 state "
-                f"placeholder (id {self.state_id}); got "
-                f"{st_counts.tolist()}."
-            )
-        emb = emb.masked_scatter(img_mask, img)  # fill 392 slots
-        emb = emb.masked_scatter(st_mask, state_tok)  # fill 1 slot
-        h = self.language_backbone(inputs_embeds=emb).last_hidden_state
-        return h  # [B, 392 + L + 1, 576]
+        embeddings, mask, position_ids = self.embed_inputs(
+            images, input_ids, state, text_attention_mask
+        )
+        return self.contextualize(embeddings, mask, position_ids)

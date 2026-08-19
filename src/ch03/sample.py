@@ -8,7 +8,8 @@ FFmpeg. So that the chapter never has to demonstrate the backbone on
 ``torch.rand`` noise, one real frame pair from
 ``lerobot/svla_so101_pickplace`` travels with the package: the two camera
 views as lossless PNGs, plus the z-scored 6-dim state and the episode's
-task string in ``assets/sample.json``.
+task string in ``assets/sample.json``. That metadata also records the
+dataset revision and source episode, frame, and timestamp for this sample.
 
 The PNGs hold the exact uint8 pixels the dataloader decodes, so dividing
 by 255 reproduces the dataloader's ``[0, 1]`` float32 frames bit for bit.
@@ -27,8 +28,8 @@ import torch
 from PIL import Image
 
 ASSETS = Path(__file__).parent / "assets"
-# Camera order matches the fused layout: camera 0 is the overhead view
-# (observation.images.up), camera 1 the side view.
+# Camera order matches the observation prefix: camera 0 is the overhead
+# view (observation.images.up), camera 1 the side view.
 CAMERA_FRAMES = ("frame_up.png", "frame_side.png")
 METADATA = "sample.json"
 
@@ -55,7 +56,7 @@ def load_sample() -> tuple[torch.Tensor, torch.Tensor, str]:
     meta = json.loads((ASSETS / METADATA).read_text())
     frames = [_load_frame(ASSETS / name) for name in CAMERA_FRAMES]
     images = torch.stack(frames).unsqueeze(0)  # [1, 2, 3, 480, 640]
-    state = torch.tensor(
-        meta["state"], dtype=torch.float32
-    ).unsqueeze(0)  # [1, 6] float32, cast down from the dataset's float64
+    state = torch.tensor(meta["state"], dtype=torch.float32).unsqueeze(
+        0
+    )  # [1, 6] float32, cast down from the dataset's float64
     return images, state, meta["instruction"]

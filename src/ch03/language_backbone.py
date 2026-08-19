@@ -1,14 +1,16 @@
 """Language backbone: SmolLM2-135M with its native tokenizer.
 
-The instruction ("pick up the red cube") is encoded by a small,
+The instruction ("put the Lego brick in the box") is encoded by a small,
 pre-trained decoder language model. SmolLM2-135M runs on a laptop and
-ships a 49,152-token byte-pair tokenizer that we use unchanged.
-Vocabulary expansion for action tokens is Chapter 4's first step, not
-this chapter's concern.
+ships a 49,152-token byte-pair tokenizer that we use unchanged; the
+Chapter 4 contract does not expand this vocabulary either (action heads
+attach their own components instead).
 
 SmolLM2's native hidden width is 576, the book's common width, so the
-language stream needs no projection at all; its per-token hidden states
-sit beside the image and state tokens as they come out of the model.
+language stream needs no projection at all. Its embedding table turns
+token ids into 576-dim input embeddings that sit beside the visual and
+state embeddings in the observation prefix, and its Transformer layers
+return contextualized hidden states at that same width.
 """
 
 from __future__ import annotations
@@ -71,10 +73,11 @@ class LanguageBackbone(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Encode instructions to ``[B, L, 576]`` hidden states and a mask.
 
-        The per-token hidden states come out at the native 576, so no
-        projection is applied. The returned attention mask (``[B, L]``,
-        1 for real tokens, 0 for padding) lets downstream fusion ignore
-        padded positions.
+        These are contextualized hidden states, not the input
+        embeddings the VLA backbone concatenates; both come out at the
+        native 576, so no projection is applied. The returned attention
+        mask (``[B, L]``, 1 for real tokens, 0 for padding) lets the
+        VLA backbone ignore padded positions.
         """
         input_ids, attention_mask = self.tokenize(instructions)
         device = next(self.model.parameters()).device

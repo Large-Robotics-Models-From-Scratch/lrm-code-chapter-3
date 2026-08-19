@@ -105,28 +105,32 @@ The rows below predate the v5 update and describe the superseded v3 design; reta
 ### To chapter 4
 
 ```python
-import torch
 from ch03 import VLABackbone
 
 backbone = VLABackbone()
-text_ids = backbone.tokenize_instruction(instruction)
-sequence_ids = torch.tensor(
-    [backbone.build_sequence_ids(text_ids)], dtype=torch.long
-)  # [1, N]
-hidden = backbone(images, sequence_ids, state)
-# images:       [B, 2, 3, 224, 224]  two cameras (up, side), preprocessed ([0,1] from Ch 2)
-# sequence_ids: [B, N]               template: 392 image + L text + 1 state placeholder (N = 392 + L + 1)
-# state:        [B, 6]               SO-101 state (5 joint positions + gripper), per Ch 2 pr-7 Table 2.2
-# hidden:       [B, N, 576]          the contract Ch 4 reads
-# tokenizer:    native SmolLM2 (49,152 vocab), no expansion in Ch 3
+tokens = backbone.tokenizer(
+    [instruction], return_tensors="pt", padding=True
+)
+hidden = backbone(
+    images, tokens.input_ids, state, tokens.attention_mask
+)
+# images:     [B, 2, 3, H, W]  two cameras (overhead, side) in [0, 1];
+#                              the vision module resizes to 224
+# input_ids:  [B, L]           HF text ids only (pad token = eos)
+# state:      [B, 6]           SO-101 state (5 joints + gripper), Ch 2 Table 2.2
+# hidden:     [B, N, 576]      contextualized hidden states, N = 392 + L + 1
+# tokenizer:  native SmolLM2 (49,152 vocab), never expanded
 ```
 
-> **Naming (this PR):** OUR fused-layout builder is `build_sequence_ids`
-> and the `forward` argument is `sequence_ids`. HF's `input_ids`
-> (tokenizer/model API) stays as-is. `N = 392 + L + 1` is the fused
-> sequence length. Chapter 4's repo must adopt these names.
+> **Naming:** the three public methods are `embed_inputs(...) ->
+> (input_embeddings, attention_mask, position_ids)`,
+> `contextualize(...) -> contextualized_hidden_states`, and
+> `forward(...) -> contextualized_hidden_states`. `input_ids` is HF's
+> text-only tokenizer output; the observation prefix (the assembled
+> `N = 392 + L + 1` sequence) is built internally. Chapter 4's repo must
+> adopt these names.
 
-Chapter 4's first step: expand the vocab with 1,536 action token IDs (256 bins × 6 dims) and call `model.resize_token_embeddings(50688)`. Then Ch 4's action head appends action token positions to the rightmost end of the sequence and trains autoregressive prediction over them.
+Chapter 4 consumes this contract unchanged. A one-shot head reads contextualized positions; the autoregressive and parallel heads extend the observation prefix between `embed_inputs` and `contextualize`, incorporating the returned `attention_mask` rather than building their own. No route expands the language vocabulary, so `add_tokens` and `resize_token_embeddings` stay out of both chapters.
 
 ### From chapter 2
 
@@ -137,7 +141,7 @@ from ch02.env import make_env  # optional, for eval rollouts
 loader, stats = make_pickplace_dataloader(batch_size=32)
 batch = next(iter(loader))
 # batch["observation.images.up"]:   [B, 3, 480, 640] float32 in [0, 1]
-# batch["observation.images.side"]: [B, 3, 480, 640] float32 in [0, 1]  (unused in Ch 3, Ch 6 adds)
+# batch["observation.images.side"]: [B, 3, 480, 640] float32 in [0, 1]  (Ch 3 uses both cameras)
 # batch["observation.state"]:       [B, 6] float32 z-scored
 # batch["action"]:                  [B, 6] float32 z-scored  (consumed by Ch 4, not Ch 3)
 # batch["task"]:                    list[str] of length B (single instruction in this dataset)
@@ -151,4 +155,30 @@ Ch 3 does NOT predict actions — it produces backbone hidden states. The `actio
 - **LoRA-fine-tune SigLIP in Ch 6** vs keep frozen all the way — Ch 6 author decides.
 - **Scale fusion layers** (6 → 12 or more) in Ch 6 — Ch 6 author decides.
 - **`observation.images.side` fusion pattern** (concat vs separate tower) — Ch 6 author decides.
-- **Image renormalization for SigLIP** — does Ch 3's `preprocess.py` need to apply ImageNet mean/std on top of Ch 2's `/255`? Verify with the SigLIP preprocessor.
+- **Image renormalization for SigLIP resolved**: `preprocess.py` resizes to 224 with `mode="bicubic"`, `align_corners=False`, `antialias=True`, and `VisionEncoder` applies SigLIP's 0.5 mean / 0.5 std `[0,1] -> [-1,1]` mapping. No ImageNet statistics. `tests/test_preprocess.py` pins the resize and the single shared implementation.
+
+## 2026-08-09: Concat migration (placeholder IDs and masked_scatter retired)
+
+The fused sequence is now built by direct concatenation of the encoded
+streams, fed to SmolLM2 through `inputs_embeds`. Rationale: only the
+language stream has vocabulary ids; the placeholder-ID + masked_scatter
+splice taught tensor bookkeeping as if it were a fusion concept, and the
+Chapter 4 parallel action head needs the pre-Transformer embeddings
+anyway. Changes:
+
+- `VLABackbone` exposes two stages: `embed_inputs(...)` -> (input
+  embeddings, attention mask, mask-derived position ids), and
+  `contextualize(...)` -> hidden states. `forward` chains them.
+- No grown embedding table, no `set_input_embeddings`, no reserved ids.
+  The table stays native at 49,152 rows.
+- Padding is first-class: `tokenizer.pad_token = eos`, and position ids
+  count valid slots only, so the state token's rotary position is
+  392 + L_valid regardless of batch padding.
+- `StateEncoder` returns `[B, 1, 576]` (sequence dim included).
+- `VisionEncoder` accepts any input resolution and resizes internally
+  via `preprocess_image` (matches manuscript 3.2.4).
+- `tests/test_migration_parity.py` pins numerical equivalence between
+  the retired splice and the concat construction; `test_guardrails.py`
+  bans `masked_scatter` from `src/`.
+- BREAKING for Ch 4: `tokenize_instruction` / `build_sequence_ids`
+  removed; forward takes HF text `input_ids` + optional text mask.

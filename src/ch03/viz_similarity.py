@@ -20,10 +20,12 @@ import matplotlib.figure
 import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as F
+from matplotlib.patches import Rectangle
 
 from ch03.preprocess import preprocess_image
 
-GRID = 14  # 196 patches arranged as a 14 x 14 grid
+GRID_SIZE = 14  # 196 patches arranged as a 14 x 14 grid
+SIMILARITY_RANGE = (-0.1, 1.0)
 
 
 def patch_self_similarity(
@@ -44,32 +46,44 @@ def patch_self_similarity(
                 f"batch of {features.shape[0]}. Index one frame first."
             )
         features = features[0]
-    if not (0 <= query_row < GRID and 0 <= query_col < GRID):
+    if not (0 <= query_row < GRID_SIZE and 0 <= query_col < GRID_SIZE):
         raise ValueError(
             f"query (row, col)=({query_row}, {query_col}) is outside "
-            f"the {GRID}x{GRID} grid [0, {GRID})."
+            f"the {GRID_SIZE}x{GRID_SIZE} grid [0, {GRID_SIZE})."
         )
-    if features.shape[0] != GRID * GRID:
+    if features.shape[0] != GRID_SIZE * GRID_SIZE:
         raise ValueError(
-            f"expected {GRID * GRID} patches for a {GRID}x{GRID} grid; "
+            f"expected {GRID_SIZE * GRID_SIZE} patches for a "
+            f"{GRID_SIZE}x{GRID_SIZE} grid; "
             f"got {features.shape[0]}."
         )
     normed = F.normalize(features, dim=-1)
-    query = normed[query_row * GRID + query_col]
-    return (normed @ query).reshape(GRID, GRID)
+    query = normed[query_row * GRID_SIZE + query_col]
+    return (normed @ query).reshape(GRID_SIZE, GRID_SIZE)
 
 
-def _overlay(ax, frame: torch.Tensor, simmap: torch.Tensor) -> None:
+def _overlay(
+    ax,
+    frame: torch.Tensor,
+    simmap: torch.Tensor,
+    similarity_range: tuple[float, float],
+):
     heat = F.interpolate(
         simmap[None, None],
         size=frame.shape[-2:],
         mode="bilinear",
         align_corners=False,
     )[0, 0]
-    heat = (heat - heat.min()) / (heat.max() - heat.min() + 1e-8)
     ax.imshow(frame.detach().cpu().permute(1, 2, 0).numpy())
-    ax.imshow(heat.detach().cpu().numpy(), cmap="inferno", alpha=0.6)
+    heatmap = ax.imshow(
+        heat.detach().cpu().numpy(),
+        cmap="inferno",
+        alpha=0.6,
+        vmin=similarity_range[0],
+        vmax=similarity_range[1],
+    )
     ax.axis("off")
+    return heatmap
 
 
 def similarity_grid(
@@ -77,13 +91,15 @@ def similarity_grid(
     image: torch.Tensor,
     queries: list[tuple[int, int, str]],
     save_path: str | None = None,
+    similarity_range: tuple[float, float] = SIMILARITY_RANGE,
 ) -> matplotlib.figure.Figure:
     """Show self-similarity for one or more query patches, side by side.
 
     ``image`` is one ``[3, H, W]`` frame in ``[0, 1]``. ``queries`` is a
     list of ``(row, col, label)`` grid positions. The first panel marks
-    each query on the frame; the rest show that query's self-similarity.
-    Pass a frame at any resolution; the encoder preprocesses to 224x224.
+    each query on the frame; the rest show that query's self-similarity
+    on the same ``similarity_range``. Pass a frame at any resolution; the
+    encoder preprocesses to 224x224.
     """
     if not queries:
         raise ValueError("queries must be a non-empty list.")
@@ -98,22 +114,47 @@ def similarity_grid(
         vision_encoder.train(was_training)
 
     height, width = image.shape[-2:]
-    fig, axes = plt.subplots(
-        1, len(queries) + 1, figsize=(4 * (len(queries) + 1), 4)
-    )
-    axes[0].imshow(image.detach().cpu().permute(1, 2, 0).numpy())
-    axes[0].set_title("query patches", fontsize=10)
-    axes[0].axis("off")
+    if len(queries) == 3:
+        fig, axes = plt.subplots(2, 2, figsize=(8, 8))
+        panels = list(axes.flat)
+    else:
+        fig, axes = plt.subplots(
+            1, len(queries) + 1, figsize=(4 * (len(queries) + 1), 4)
+        )
+        panels = list(axes) if len(queries) else [axes]
+    panels[0].imshow(image.detach().cpu().permute(1, 2, 0).numpy())
+    panels[0].set_title("source frame", fontsize=10)
+    panels[0].axis("off")
     for row, col, _ in queries:
-        px = (col + 0.5) / GRID * width
-        py = (row + 0.5) / GRID * height
-        axes[0].scatter(
-            [px], [py], s=60, c="white", edgecolors="black", linewidths=1.5
+        patch_width = width / GRID_SIZE
+        patch_height = height / GRID_SIZE
+        panels[0].add_patch(
+            Rectangle(
+                (col * patch_width, row * patch_height),
+                patch_width,
+                patch_height,
+                fill=False,
+                edgecolor="white",
+                linewidth=1.5,
+            )
         )
 
-    for ax, (row, col, label) in zip(axes[1:], queries):
-        _overlay(ax, image, patch_self_similarity(features, row, col))
+    heatmaps = []
+    for ax, (row, col, label) in zip(panels[1:], queries):
+        heatmaps.append(
+            _overlay(
+                ax,
+                image,
+                patch_self_similarity(features, row, col),
+                similarity_range,
+            )
+        )
         ax.set_title(label, fontsize=10)
+    fig.colorbar(
+        heatmaps[0],
+        ax=panels,
+        label="cosine similarity to query patch",
+    )
 
     if save_path:
         fig.savefig(save_path, dpi=300, bbox_inches="tight")
@@ -158,7 +199,12 @@ def tracking_grid(
                 feats = vision_encoder.siglip_features(
                     preprocess_image(frame).unsqueeze(0).to(device)
                 )[0]
-                _overlay(ax, frame, patch_self_similarity(feats, row, col))
+                _overlay(
+                    ax,
+                    frame,
+                    patch_self_similarity(feats, row, col),
+                    SIMILARITY_RANGE,
+                )
                 ax.set_title(label, fontsize=10)
     finally:
         vision_encoder.train(was_training)

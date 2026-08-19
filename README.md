@@ -2,21 +2,22 @@
 
 Companion code for **Chapter 3** of *Build a Large Robot Model (From Scratch)* (Manning).
 
-This chapter builds the **VLA backbone**: a frozen SigLIP vision encoder + a SmolLM2-135M language backbone + a state encoder, fused by **token-level fusion**. The two camera views and the state are projected and spliced into the language backbone's own token stream, so the pretrained backbone is the fuser - there is no separate fusion module on the main path. The output is a sequence of contextualized hidden states ready for an action head (added in Chapter 4).
+This chapter builds the **VLA backbone**: a frozen SigLIP vision encoder + a SmolLM2-135M language backbone + a state encoder, joined by **direct concatenation**. The two camera views and the state are projected to the language backbone's width and concatenated with the language input embeddings into one **observation prefix**, which the pretrained language backbone reads through `inputs_embeds` - so the language backbone is the fuser, and there is no separate fusion module on the main path. The output is a sequence of contextualized hidden states ready for an action head (added in Chapter 4).
 
 ## What you build
 
 ```
 images ──▶  VisionEncoder (SigLIP, frozen, 2 cams) ──▶  [B, 392, 576]
-text   ──▶  LanguageBackbone (SmolLM2-135M)        ──▶  [B,  L,  576]
+text   ──▶  SmolLM2 embedding table                ──▶  [B,  L,  576]
 state  ──▶  StateEncoder (MLP)                     ──▶  [B,  1,  576]
-        masked_scatter splice into the backbone's own stream
-        (the pretrained backbone fuses; no separate fusion module)
+     concatenated into one observation prefix, plus an attention
+     mask and position IDs, fed via inputs_embeds
+     (the language backbone fuses; no separate fusion module)
                           ▼
-                    [B, 392+L+1, 576]
+              [B, 392+L+1, 576] contextualized hidden states
 ```
 
-The backbone composes those three modules rather than rebuilding them. `VisionEncoder` is used as-is, so the frozen SigLIP, the 768->576 projection, and SigLIP's `[0,1]`->`[-1,1]` pixel normalization exist in exactly one place, and the grown input embedding table is handed back to the language backbone so the model carries one embedding table (135,295,488 trainable / 92,884,224 frozen parameters).
+The backbone composes those three modules rather than rebuilding them. `VisionEncoder` is used as-is, so the frozen SigLIP, the resize to 224 (bicubic, antialiased), the 768->576 projection, and SigLIP's `[0,1]`->`[-1,1]` pixel normalization exist in exactly one place. Only the language stream carries vocabulary IDs, so SmolLM2's embedding table stays native at 49,152 rows (135,294,336 trainable / 92,884,224 frozen parameters).
 
 Plus a **patch self-similarity visualization** that shows the frozen vision encoder localizes objects before any action head is attached - diagnostic only, no training.
 
@@ -31,16 +32,20 @@ images, state, instruction = load_sample()
 # instruction: "pink lego brick into the transparent box"
 ```
 
+Its `assets/sample.json` records the dataset revision plus source episode,
+frame, and timestamp, while `load_sample()` keeps this three-value return
+contract.
+
 ## Locked architecture (Ch 3 plan v5)
 
 | Component | Choice |
 |---|---|
 | Vision encoder | SigLIP-base/16 (frozen) |
-| Language backbone | SmolLM2-135M (native tokenizer; **no vocab expansion** - that's Ch 4) |
-| Fusion | Token-level fusion: image and state tokens spliced into the backbone's stream via `masked_scatter`; the pretrained backbone fuses (no separate fusion module on the main path) |
-| Hidden dim | 576 (the backbone's native width) |
+| Language backbone | SmolLM2-135M (native tokenizer; **no vocabulary expansion**, in Ch 3 or Ch 4) |
+| Fusion | Direct concatenation: visual, language, and state input embeddings concatenated into one observation prefix, fed via `inputs_embeds`; the language backbone fuses (no separate fusion module) |
+| Hidden dim | 576 (the language backbone's native width) |
 | Robot | SO-100 (6-DOF arm + 1 gripper) |
-| Camera input | both `observation.images.up` and `observation.images.side` (two cameras, 392 image tokens = 2 x 196) |
+| Camera input | both `observation.images.up` and `observation.images.side` (two cameras, 392 visual positions = 2 x 196) |
 
 ## Setup
 
@@ -101,9 +106,8 @@ lrm-code-chapter-3/
 │   ├── state_encoder.py            # PR 4 — 6→576 MLP
 │   ├── fusion_transformer.py       # optional separate-encoder fusion exercise (off main path)
 │   ├── vla_backbone.py             # PR 5 — VLABackbone, composes the above
-│   ├── viz_attention.py            # PR 2 — attention rollout
-│   ├── viz_prompted_attention.py   # PR 6 — 3-prompt attention grid
-│   ├── preprocess.py               # PR 5 — image preprocessing
+│   ├── viz_similarity.py           # PR 2 — patch self-similarity probe
+│   ├── preprocess.py               # PR 5 — bicubic antialiased resize to 224
 │   ├── sample.py                   # load_sample() — one real Ch 2 sample
 │   └── assets/                     # frame_up.png, frame_side.png, sample.json
 ├── notebooks/
@@ -117,14 +121,19 @@ lrm-code-chapter-3/
 │   └── decisions/
 │       ├── vision-encoder-choice.md
 │       └── fusion-design.md
-├── scripts/                        # Reader sanity scripts (check_<module>.py, added per PR)
+├── scripts/
+│   └── build_notebook.py           # regenerates notebooks/ch03.ipynb
 ├── tests/
 │   ├── conftest.py
 │   ├── test_smoke.py
+│   ├── test_preprocess.py          # incl. the bicubic/antialias parity tests
 │   ├── test_vision_encoder.py
 │   ├── test_language_backbone.py
 │   ├── test_state_encoder.py
 │   ├── test_fusion_transformer.py
+│   ├── test_viz_similarity.py
+│   ├── test_guardrails.py
+│   ├── test_migration_parity.py
 │   ├── test_sample.py
 │   └── test_vla_backbone.py
 └── figures/                        # Rendered figures (figure_3_*.png)
@@ -133,26 +142,30 @@ lrm-code-chapter-3/
 ## Hand-off contract to chapter 4
 
 ```python
-import torch
 from ch03 import VLABackbone
 
 backbone = VLABackbone()
-text_ids = backbone.tokenize_instruction(instruction)
-sequence_ids = torch.tensor(
-    [backbone.build_sequence_ids(text_ids)], dtype=torch.long
-)  # [1, N]
-hidden = backbone(images, sequence_ids, state)
-# images:       [B, 2, 3, 224, 224]   two cameras (up + side), preprocessed
-# text_ids:     list[int]             L native SmolLM2 ids from tokenize_instruction
-# sequence_ids: [B, N] long tensor    image + text + state template rows
-# state:        [B, 6]                SO-101 state (5 joint positions + gripper) per Ch 2 Table 2.2
-# hidden:       [B, N, 576]           N = 392 + L + 1
-# tokenizer:    native SmolLM2 (49,152 vocab) - no expansion in Ch 3
+tokens = backbone.tokenizer(
+    [instruction], return_tensors="pt", padding=True
+)
+hidden = backbone(
+    images, tokens.input_ids, state, tokens.attention_mask
+)
+# images:  [B, 2, 3, H, W] in [0, 1]  two cameras (up + side); the
+#                                     vision module resizes to 224
+# input_ids: [B, L] long tensor       HF text ids (pad token = eos)
+# state:   [B, 6]                     SO-101 state per Ch 2 Table 2.2
+# hidden:  [B, N, 576]                contextualized hidden states,
+#                                     N = 392 + L + 1
+# Two-stage access for heads that extend the observation prefix:
+#   emb, mask, pos = backbone.embed_inputs(images, ids, state, m)
+#   hidden = backbone.contextualize(emb, mask, pos)
+# tokenizer: native SmolLM2 (49,152 vocab) - never expanded
 ```
 
-`fusion_transformer.py` is the optional separate-encoder fusion exercise (Exercise 3.4), kept off the main path; the shipped backbone fuses by splicing image and state tokens into the language backbone's own stream.
+`fusion_transformer.py` is the optional separate-encoder fusion exercise, kept off the main path; the shipped backbone concatenates the visual, language, and state input embeddings directly and lets the language backbone fuse them.
 
-Chapter 4's first step: expand the vocab with 1,536 action token IDs and `resize_token_embeddings`. That belongs to Ch 4, not here.
+Chapter 4 consumes this contract unchanged. Its action architectures either read the returned hidden states or extend the observation prefix between `embed_inputs` and `contextualize`; neither route expands the language vocabulary.
 
 ## Reader tracks (see book chapter 1)
 

@@ -80,3 +80,13 @@ Trade-off accepted: image patch token N sees only image patch tokens 0..N-1, not
 - Flamingo: Alayrac et al. 2022, arXiv:2204.14198 (cross-attention reference)
 - BLIP-2: Li et al. 2023, arXiv:2301.12597 (Q-former reference)
 - Attention rollout (for visualization basis): Abnar & Zuidema 2020, arXiv:2005.00928
+
+## Addendum (2026-08-09): splice retired in favor of concatenation
+
+The token-level fusion DESIGN is unchanged (one sequence, the pretrained
+backbone fuses). The CONSTRUCTION changed: direct concatenation through
+`inputs_embeds` replaces the placeholder-ID + `masked_scatter` splice.
+The splice was an implementation convenience for keeping one integer
+row, not a fusion concept, and the manuscript now teaches concat-first.
+Equivalence with the old construction is pinned permanently in
+`tests/test_migration_parity.py`. See ARCHITECTURE_LOG.md (2026-08-09).

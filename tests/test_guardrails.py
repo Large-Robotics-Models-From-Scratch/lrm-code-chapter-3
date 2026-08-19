@@ -9,7 +9,12 @@ from pathlib import Path
 import pytest
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "ch03"
-FORBIDDEN = ["add_tokens", "resize_token_embeddings"]
+# add_tokens / resize_token_embeddings: vocabulary expansion belongs
+# to Chapter 4. masked_scatter: the retired splice construction; the
+# chapter now concatenates streams and feeds inputs_embeds, and the
+# only sanctioned copy of the old path lives in
+# tests/test_migration_parity.py.
+FORBIDDEN = ["add_tokens", "resize_token_embeddings", "masked_scatter"]
 
 
 @pytest.mark.parametrize("forbidden", FORBIDDEN)
