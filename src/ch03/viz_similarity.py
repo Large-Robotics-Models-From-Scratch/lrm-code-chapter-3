@@ -24,7 +24,7 @@ from matplotlib.patches import Rectangle
 
 from ch03.preprocess import preprocess_image
 
-GRID = 14  # 196 patches arranged as a 14 x 14 grid
+GRID_SIZE = 14  # 196 patches arranged as a 14 x 14 grid
 SIMILARITY_RANGE = (-0.1, 1.0)
 
 
@@ -46,19 +46,20 @@ def patch_self_similarity(
                 f"batch of {features.shape[0]}. Index one frame first."
             )
         features = features[0]
-    if not (0 <= query_row < GRID and 0 <= query_col < GRID):
+    if not (0 <= query_row < GRID_SIZE and 0 <= query_col < GRID_SIZE):
         raise ValueError(
             f"query (row, col)=({query_row}, {query_col}) is outside "
-            f"the {GRID}x{GRID} grid [0, {GRID})."
+            f"the {GRID_SIZE}x{GRID_SIZE} grid [0, {GRID_SIZE})."
         )
-    if features.shape[0] != GRID * GRID:
+    if features.shape[0] != GRID_SIZE * GRID_SIZE:
         raise ValueError(
-            f"expected {GRID * GRID} patches for a {GRID}x{GRID} grid; "
+            f"expected {GRID_SIZE * GRID_SIZE} patches for a "
+            f"{GRID_SIZE}x{GRID_SIZE} grid; "
             f"got {features.shape[0]}."
         )
     normed = F.normalize(features, dim=-1)
-    query = normed[query_row * GRID + query_col]
-    return (normed @ query).reshape(GRID, GRID)
+    query = normed[query_row * GRID_SIZE + query_col]
+    return (normed @ query).reshape(GRID_SIZE, GRID_SIZE)
 
 
 def _overlay(
@@ -125,8 +126,8 @@ def similarity_grid(
     panels[0].set_title("source frame", fontsize=10)
     panels[0].axis("off")
     for row, col, _ in queries:
-        patch_width = width / GRID
-        patch_height = height / GRID
+        patch_width = width / GRID_SIZE
+        patch_height = height / GRID_SIZE
         panels[0].add_patch(
             Rectangle(
                 (col * patch_width, row * patch_height),
