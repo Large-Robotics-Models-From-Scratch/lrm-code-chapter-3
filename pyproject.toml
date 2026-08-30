@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "lrm-ch03"
 version = "0.1.0"
 description = "Chapter 3 code for 'Build a Large Robot Model (From Scratch)' (Manning): VLA backbone — SigLIP vision encoder + SmolLM language backbone + multimodal fusion transformer"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12,<3.14"
 license = { text = "Apache-2.0" }
 authors = [
     { name = "Krishnam Gupta" },

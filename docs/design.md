@@ -332,14 +332,15 @@ GitHub Actions: `pytest tests/ -m "not integration"` on push. Same CPU-torch-fir
 
 ### Python version
 
-**3.12 only** (`>=3.12,<3.13`) to match `lerobot==0.5.1` and `lrm-code-agents/defaults.yml`.
+**3.12 or 3.13** (`>=3.12,<3.14`) to match `lerobot==0.5.1` and the
+Colab runtime.
 
 ### Packaging
 
 ```toml
 [project]
 name = "lrm-ch03"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "torch>=2.1,<3.0",
     "transformers>=4.45,<5.0",
