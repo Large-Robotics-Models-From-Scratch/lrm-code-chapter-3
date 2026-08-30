@@ -61,14 +61,11 @@ if "google.colab" in sys.modules:
 
 # Chapter 2's live data pipeline is NOT needed here: one real sample from
 # its dataset (both camera views, the state, the instruction) ships inside
-# the ch03 package, so this notebook never runs on random noise. Chapter 2
-# also does not install alongside Chapter 3 under this repo's pins:
-# lerobot 0.5.1 requires huggingface-hub>=1.0,<2.0 while transformers
-# <5.0 requires huggingface-hub<1.0. To stream whole episodes yourself,
-# relax the transformers pin to allow 5.x (pip then resolves lerobot
-# 0.5.1 + transformers 5.x + huggingface-hub 1.x) and have a system
-# FFmpeg for torchcodec, or no torchcodec at all so lerobot falls back to
-# its bundled pyav decoder:
+# the ch03 package, so this notebook never runs on random noise. The public
+# Chapter 2 and Chapter 3 packages can be installed together. To stream
+# whole episodes yourself, also install Chapter 2 and provide system FFmpeg
+# for torchcodec, or omit torchcodec so LeRobot falls back to its bundled
+# pyav decoder:
 #   !pip install -q "lrm-ch02[data] @ git+{ORG}/lrm-code-chapter-2.git"
 """)
 

@@ -342,8 +342,8 @@ Colab runtime.
 name = "lrm-ch03"
 requires-python = ">=3.12,<3.14"
 dependencies = [
-    "torch>=2.1,<3.0",
-    "transformers>=4.45,<5.0",
+    "torch>=2.5,<3.0",
+    "transformers>=5.0,<6.0",
     "numpy>=1.24,<3.0",
     "pillow>=10,<12",
     "matplotlib>=3.7,<4.0",
@@ -370,7 +370,9 @@ dev = [
 ```
 
 Pins:
-- **`transformers>=4.45`** — SigLIP-base and SmolLM2-135M both supported, and the `inputs_embeds` + `position_ids` path behaves consistently
+- **`transformers>=5.0,<6.0`** — resolves with LeRobot 0.5.1's
+  Hugging Face Hub 1.x requirement; SigLIP-base and SmolLM2-135M remain
+  supported through the `inputs_embeds` + `position_ids` path
 - **`lerobot==0.5.1`** — matches Ch 2 hand-off contract
 - **`torch>=2.1`** — matches Ch 2
 

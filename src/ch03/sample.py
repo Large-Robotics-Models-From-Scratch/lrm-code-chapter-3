@@ -1,11 +1,9 @@
 """One real sample from the Chapter 2 dataset, shipped in the repo.
 
 Chapter 2's ``make_pickplace_dataloader`` is the real source of batches,
-but it does not install alongside Chapter 3 under this repo's pins
-(lerobot 0.5.1 wants huggingface-hub>=1.0 while transformers<5.0 wants
-huggingface-hub<1.0), and decoding the dataset's videos needs a system
-FFmpeg. So that the chapter never has to demonstrate the backbone on
-``torch.rand`` noise, one real frame pair from
+and decoding the dataset's videos needs a system FFmpeg. So that the
+chapter never has to demonstrate the backbone on ``torch.rand`` noise,
+one real frame pair from
 ``lerobot/svla_so101_pickplace`` travels with the package: the two camera
 views as lossless PNGs, plus the z-scored 6-dim state and the episode's
 task string in ``assets/sample.json``. That metadata also records the
