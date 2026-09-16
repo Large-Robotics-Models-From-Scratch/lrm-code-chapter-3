@@ -63,15 +63,19 @@ For each of the 7 listings in `docs/chapter_3_plan.md`, in order:
 1. **Read the listing spec** in `docs/chapter_3_plan.md`.
 2. **Locate the module**:
 
+   Listing numbers follow the locked manuscript, `../lrm-book/chapter_3/manuscript/ch03_singh3_LOCKED_2026-09-03.docx`.
+
    | Listings | Module | Reader role |
    |---|---|---|
    | 3.1 | `src/ch03/vision_encoder.py` (SigLIP load + freeze + project) | type-along |
    | 3.2 | `src/ch03/viz_similarity.py` (patch self-similarity) | provided utility |
-   | 3.3 | `src/ch03/language_backbone.py` (SmolLM2, no vocabulary expansion) | type-along |
-   | 3.4 | `src/ch03/state_encoder.py` (6-dim -> 576 MLP) | type-along |
+   | 3.3 | `src/ch03/state_encoder.py` (6-dim -> 576 MLP) | type-along |
+   | 3.4 | `notebooks/ch03.ipynb` (tokenizer, `pad_token = eos_token`, SmolLM2 embedding-table lookup) | type-along |
    | 3.5 | `src/ch03/vla_backbone.py` (`embed_inputs`: concatenate the three streams + attention mask + position IDs) | type-along |
-   | 3.6 | `src/ch03/vla_backbone.py` (`contextualize` + `forward`: run SmolLM2 via inputs_embeds) | type-along |
-   | 3.7 | `tests/` (definition-of-done verification: shapes, observation-prefix order, no vocabulary change) | verification |
+   | 3.6 | `src/ch03/vla_backbone.py` (`contextualize`: run SmolLM2 via inputs_embeds) | type-along |
+   | 3.7 | `src/ch03/vla_backbone.py` (`forward` + the end-to-end run on one recorded timestep) | type-along |
+
+   `src/ch03/language_backbone.py` is an extra standalone module. It no longer corresponds to a numbered listing; it is kept for `tests/test_language_backbone.py` and for editor cross-reference. `tests/` verifies the listings (shapes, observation-prefix order, no vocabulary change) but is not itself a listing.
 
 3. **Mirror in the notebook**.
 4. **Write the code** matching the plan exactly: same variable names, same annotations, same line ordering.
@@ -102,7 +106,7 @@ Run `chapter-continuity` after any change to the export surface.
 
 ## 5. Figures
 
-The chapter plan lists 7 figures (3.1-3.7). Figure 3.1 is the generic VLA-backbone map (modality-specific encoders, common-width input embeddings, one multimodal sequence, the language backbone, contextualized hidden states) and Figure 3.7 is the concrete implementation recap; both are diagrams rather than rendered outputs. The data-driven figures are produced inside `notebooks/ch03.ipynb` using helper functions in `src/ch03/viz_similarity.py`, exported to `figures/` for the chapter draft.
+The chapter plan lists 7 figures (3.1-3.7). Figure 3.1 is the generic VLA-backbone map (modality-specific encoders, common-width input embeddings, one multimodal sequence, the Fusion Transformer, contextualized hidden states) and Figure 3.7 is the concrete implementation recap; both are diagrams rather than rendered outputs. The data-driven figures are produced inside `notebooks/ch03.ipynb` using helper functions in `src/ch03/viz_similarity.py`, exported to `figures/` for the chapter draft.
 
 For each figure:
 - The plotting helper lives in `src/ch03/` so it is importable and testable

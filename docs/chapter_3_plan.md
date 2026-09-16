@@ -1,6 +1,6 @@
 # Chapter 3: Building the VLA Backbone — Structure & Content Plan (v3)
 
-> **Superseded by v5 (shipped code)**: the prose below is a historical plan snapshot. The shipped backbone is `VLABackbone` (the v3 name, kept), uses `SmolLM2-135M`, hidden width **576** (the backbone's native width, no 512 down-projection), **two cameras** (`up` + `side`) for **392** image tokens, and fuses by splicing image and state tokens into the language backbone's own stream via `masked_scatter` (the pretrained backbone is the fuser; there is no separate fusion transformer on the main path - `fusion_transformer.py` is only the optional separate-encoder exercise). Output contract: `[B, 392 + L + 1, 576]`. Load-bearing facts are corrected inline below; where a section is clearly a historical snapshot, treat the v5 facts here as authoritative.
+> **Superseded by v5 (shipped code)**: the prose below is a historical plan snapshot. The shipped backbone is `VLABackbone` (the v3 name, kept), uses `SmolLM2-135M`, hidden width **576** (the backbone's native width, no 512 down-projection), **two cameras** (`up` + `side`) for **392** image tokens, and fuses by splicing image and state tokens into the language backbone's own stream via `masked_scatter` (the pretrained LLM, held as `self.fusion_transformer`, is the fuser; there is no separate from-scratch fuser on the main path - `separate_fuser.py` is only the optional separate-encoder exercise). Output contract: `[B, 392 + L + 1, 576]`. Load-bearing facts are corrected inline below; where a section is clearly a historical snapshot, treat the v5 facts here as authoritative.
 
 **Author**: Krishnam Gupta
 **Code repo**: `Large-Robotics-Models-From-Scratch/lrm-code-chapter-3`
@@ -214,7 +214,7 @@ Three stories woven together:
 
 **Listings**:
 - 3.4: StateEncoder (~25 lines)
-- 3.5: FusionTransformer (~80 lines, the meatiest listing)
+- 3.5: SeparateEncoderFuser (~80 lines, the meatiest listing)
 - 3.6: VLABackbone (~80 lines, the integration)
 - 3.7: Prompted attention visualization (~30 lines — pass image through backbone with several instructions, run attention rollout per prompt, save overlay plots)
 
@@ -310,7 +310,7 @@ Same anatomy. You scaled differently.
 | Image preprocessing | Resize 480×640 → 224×224 (Ch 2 ships native dataset resolution; Ch 3 resizes for SigLIP) | Match SigLIP input size |
 | Language backbone | SmolLM2-135M | Small, OSS, runs on T4, good tokenizer |
 | Tokenizer changes in ch 3 | **None** — native SmolLM2 tokenizer | Vocab expansion moved to ch 4 |
-| Fusion mechanism | Token-level fusion: image and state tokens spliced into the backbone's stream via `masked_scatter` (the pretrained backbone fuses) | No separate fusion module on the main path; `fusion_transformer.py` is the optional separate-encoder exercise |
+| Fusion mechanism | Token-level fusion: image and state tokens spliced into the backbone's stream via `masked_scatter` (the pretrained backbone fuses) | No separate fusion module on the main path; `separate_fuser.py` is the optional separate-encoder exercise |
 | Hidden dim | 576 | The language backbone's native width; all streams project to 576 |
 | Attention heads | (backbone native) | Provided by the pretrained SmolLM2-135M backbone |
 | Fusion transformer layers | n/a on main path | Backbone is the fuser; the 6-layer fusion transformer is the optional exercise only |
@@ -379,7 +379,7 @@ lrm-code-chapter-3/
 │   ├── vision_encoder.py           # ~80 LOC
 │   ├── language_backbone.py        # ~80 LOC (slimmer — no vocab expansion)
 │   ├── state_encoder.py            # ~30 LOC
-│   ├── fusion_transformer.py       # ~150 LOC
+│   ├── separate_fuser.py           # ~150 LOC
 │   └── vla_backbone.py             # ~100 LOC
 ├── data/
 │   └── preprocess.py               # ~60 LOC
@@ -388,7 +388,7 @@ lrm-code-chapter-3/
 └── tests/
     ├── test_vision_encoder.py
     ├── test_language_backbone.py
-    ├── test_fusion_transformer.py
+    ├── test_separate_fuser.py
     └── test_vla_backbone.py
 ```
 

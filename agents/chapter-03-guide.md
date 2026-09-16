@@ -47,8 +47,8 @@ when the source is clearer.
 
 Fusion is token-level fusion (image and state tokens spliced into the language
 backbone's own stream); there is no separate fusion transformer on the main
-path. The `FusionTransformer` is the optional separate-encoder exercise 3.4
-only (`src/ch03/fusion_transformer.py`).
+path. The `SeparateEncoderFuser` is the optional separate-encoder exercise
+3.4 only (`src/ch03/separate_fuser.py`).
 
 # How to interact
 

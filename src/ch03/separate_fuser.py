@@ -1,9 +1,9 @@
-"""Separate-encoder fusion: an optional, standalone alternative.
+"""Separate-encoder fusion: a reference implementation, off the main path.
 
-This module is the exercise-only separate-encoder fuser. It is not part
-of the chapter's main path and is not imported by the main backbone; it
-exists for the chapter's optional fusion exercise, where the reader
-bolts a from-scratch fusion Transformer onto the frozen streams and
+This module is a reference implementation of the separate-encoder
+alternative. It is not on the chapter's main path and is not imported by
+the main backbone; it exists for the chapter's optional fusion exercise,
+where the reader bolts a from-scratch fuser onto the frozen streams and
 compares it against the direct concatenation the chapter ships.
 
 In separate-encoder fusion each stream is encoded on its own and a
@@ -24,7 +24,7 @@ import torch
 import torch.nn as nn
 
 
-class FusionBlock(nn.Module):
+class SeparateFuserBlock(nn.Module):
     """One pre-norm self-attention block with a feed-forward layer."""
 
     def __init__(
@@ -71,7 +71,7 @@ class FusionBlock(nn.Module):
         return tokens, weights
 
 
-class FusionTransformer(nn.Module):
+class SeparateEncoderFuser(nn.Module):
     """A causal pre-norm transformer over the concatenated sequence."""
 
     def __init__(
@@ -83,7 +83,7 @@ class FusionTransformer(nn.Module):
     ) -> None:
         super().__init__()
         self.blocks = nn.ModuleList(
-            FusionBlock(hidden_dim, num_heads, dropout)
+            SeparateFuserBlock(hidden_dim, num_heads, dropout)
             for _ in range(num_layers)
         )
         self.norm_out = nn.LayerNorm(hidden_dim)

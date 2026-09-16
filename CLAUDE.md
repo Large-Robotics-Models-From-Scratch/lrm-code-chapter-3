@@ -4,16 +4,16 @@ You are working on **Chapter 3** of "Build a Large Robot Model (From Scratch)" (
 
 ## Chapter scope
 
-This repo contains the code for **the VLA backbone**: a frozen SigLIP vision encoder + SmolLM2-135M language backbone + state encoder, joined by direct concatenation. The two camera views and the state are projected to the language backbone's width and concatenated with the language input embeddings into one observation prefix, which the language backbone reads through `inputs_embeds` - so the language backbone is the fuser, and there is no separate fusion transformer on the main path. Output: contextualized hidden states ready for an action head (Chapter 4 adds it).
+This repo contains the code for **the VLA backbone**: a frozen SigLIP vision encoder + SmolLM2-135M Fusion Transformer + state encoder, joined by direct concatenation. The two camera views and the state are projected to the Fusion Transformer's width and concatenated with the language input embeddings into one observation prefix, which the Fusion Transformer reads through `inputs_embeds` - so the pretrained LLM, held as `self.fusion_transformer`, is the fuser, and there is no separate from-scratch fuser on the main path. Output: contextualized hidden states ready for an action head (Chapter 4 adds it).
 
 ## Locked architectural decisions (Ch 3 plan v3)
 
 | Component | Choice | Source of truth |
 |---|---|---|
 | Vision encoder | SigLIP-base/16 (frozen) | `src/ch03/vision_encoder.py` |
-| Language backbone | SmolLM2-135M (**native tokenizer; no vocab expansion**) | `src/ch03/language_backbone.py` |
-| Fusion | Direct concatenation: visual, language, and state input embeddings concatenated into one observation prefix, fed to the language backbone via `inputs_embeds`; the pretrained language backbone fuses (no separate fusion module on the main path, no placeholder IDs, no `masked_scatter`) | `src/ch03/vla_backbone.py` (source of truth); `fusion_transformer.py` kept only as the optional "separate-encoder fusion" exercise |
-| Hidden dim | 576 | The language backbone's native width; all projections target 576 |
+| Fusion Transformer | SmolLM2-135M (**native tokenizer; no vocab expansion**) | `src/ch03/vla_backbone.py` (`self.fusion_transformer`); `src/ch03/language_backbone.py` is an extra standalone module, not a numbered listing |
+| Fusion | Direct concatenation: visual, language, and state input embeddings concatenated into one observation prefix, fed to the Fusion Transformer via `inputs_embeds`; the pretrained LLM (`self.fusion_transformer`) fuses (no separate fusion module on the main path, no placeholder IDs, no `masked_scatter`) | `src/ch03/vla_backbone.py` (source of truth); `separate_fuser.py` kept only as the optional "separate-encoder fusion" exercise |
+| Hidden dim | 576 | The Fusion Transformer's native width; all projections target 576 |
 | Robot | SO-100 sim env (PickCubeSO100-v1); SO-101 teleop dataset (6-DOF: 5 arm + gripper) | Ch 2 hand-off |
 | Camera input | both `observation.images.up` and `observation.images.side` (two cameras, 392 visual positions = 2 x 196) | Ch 2 hand-off |
 | State dim | **6** (5 SO-101 joint positions + gripper position; verified per Ch 2 pr-7 Table 2.2) | `src/ch03/state_encoder.py` |
@@ -38,7 +38,7 @@ Never in either chapter: vocabulary expansion (`tokenizer.add_tokens`, `model.re
 - `observation.images.up: (B, 3, 480, 640) float32` in `[0, 1]` (Ch 3 resizes to 224x224)
 - `observation.images.side: (B, 3, 480, 640) float32` in `[0, 1]` (Ch 3 now consumes BOTH cameras - up and side - each resized to 224x224)
 - `action: (B, 6) float32` z-scored — Ch 3 doesn't predict actions, just hands hidden states to Ch 4
-- `task: list[str]` — the instruction, fed to the language backbone
+- `task: list[str]`: the instruction, fed to the Fusion Transformer
 
 > **Real sample shipped in-repo:** Chapter 2's loader does not install alongside Chapter 3 (lerobot 0.5.1 wants huggingface-hub>=1.0, transformers<5.0 wants <1.0) and video decode needs FFmpeg, so one real timestep travels with the package: `from ch03 import load_sample` returns `(images [1, 2, 3, 480, 640] float32 in [0,1], state [1, 6] float32, instruction)`, backed by lossless PNGs in `src/ch03/assets/`. Use it instead of `torch.rand` in listings, notebooks, and demos. The dataset's real task string is `"pink lego brick into the transparent box"` - do not paraphrase it.
 
@@ -96,7 +96,7 @@ Symlinked into `.claude/agents/` via the setup in `program.md` §2. See `../lrm-
 
 ## When editing code
 
-- Locked component names: `vision_encoder`, `language_backbone`, `action_head`, `fusion_transformer` - never abbreviate or rename. Note: `fusion_transformer` is a valid name but only for the optional separate-encoder fusion exercise; the main path fuses by direct concatenation in `vla_backbone.py`
+- Locked component names: `vision_encoder`, `fusion_transformer`, `state_encoder`, `action_head` - never abbreviate or rename. Note: `fusion_transformer` is the pretrained SmolLM2 stack on `VLABackbone`; the optional separate-encoder exercise is `separate_fuser.py` (`SeparateEncoderFuser`), off the main path
 - Banned: JAX, TensorFlow imports
 - Line length: 76 chars (55 for annotated lines)
 - Python 3.12, indent 4 spaces

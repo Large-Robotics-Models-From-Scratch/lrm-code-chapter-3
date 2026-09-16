@@ -7,7 +7,7 @@
 
 > **Update (manuscript v5).** The shipped design is now **token-level fusion**: the two camera views (392 image tokens) and the state token are spliced with `masked_scatter` into the SmolLM2-135M backbone's own input embeddings, and the pretrained attention does the fusing. Hidden width is the backbone's native **576**, the sequence is `[image (392), language (L), state (1)]`, and the output contract is `[B, 392 + L + 1, 576]`. See `src/ch03/vla_backbone.py` (`VLABackbone`).
 >
-> The standalone from-scratch fuser described below is now **separate-encoder fusion**: a named alternative and optional exercise 3.4, not on the main path. It lives in `src/ch03/fusion_transformer.py` and is not imported by the backbone. The notes below are retained for that exercise's rationale.
+> The standalone from-scratch fuser described below is now **separate-encoder fusion**: a named alternative and optional exercise 3.4, not on the main path. It lives in `src/ch03/separate_fuser.py` (`SeparateEncoderFuser`) and is not imported by the backbone. The notes below are retained for that exercise's rationale.
 
 ## TL;DR (separate-encoder fusion, now the optional exercise)
 
