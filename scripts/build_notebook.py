@@ -101,7 +101,7 @@ print("instruction:", instruction)
 md("""
 ## 3.2 The eyes: vision encoder
 
-### Listing 3.1 Loading and freezing SigLIP
+### Listing 3.1 A frozen vision encoder with a trainable projection
 
 ``VisionEncoder`` wraps a frozen SigLIP-base/16 and projects its 768-dim
 patch representations to the book's common 576-dim width. A 224x224 image
@@ -122,7 +122,7 @@ print("visual embeddings:", tuple(patches.shape))   # [1, 196, 576]
 """)
 
 md("""
-### Listing 3.2 What the frozen encoder groups (patch self-similarity)
+### Listing 3.2 Patch self-similarity over the frozen SigLIP representations
 
 Pick one patch and measure cosine similarity between its frozen SigLIP
 feature and every other patch. Querying a brick patch lights up the brick;
@@ -150,7 +150,7 @@ fig_3_3 = similarity_grid(            # Figure 3.3
 md("""
 ## 3.3 The state encoder
 
-### Listing 3.3 The state encoder
+### Listing 3.3 Mapping the robot state to one state embedding
 
 A two-layer MLP (``Linear -> GELU -> Linear``) lifts the 6 joint numbers
 (five arm joints plus the gripper) into one 576-dim state embedding,
@@ -214,7 +214,7 @@ md("""
 """)
 
 md("""
-### Listing 3.5 Building the multimodal sequence
+### Listing 3.5 Building the multimodal input sequence
 
 The backbone composes what you already built. Its vision path is the
 ``VisionEncoder`` from listing 3.1, used unchanged, so the frozen SigLIP,
@@ -280,7 +280,7 @@ print(f"mean |change| per element after contextualizing: {delta:.3f}")
 """)
 
 md("""
-### Listing 3.7 Running the complete VLA backbone on one observation
+### Listing 3.7 Completing and running the VLA backbone
 
 The two stages above are the whole backbone, and ``forward`` composes
 them, so one call takes the recorded observation to hidden states.
