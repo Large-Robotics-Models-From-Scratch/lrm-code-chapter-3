@@ -57,9 +57,11 @@ def patch_self_similarity(
             f"{GRID_SIZE}x{GRID_SIZE} grid; "
             f"got {features.shape[0]}."
         )
-    normed = F.normalize(features, dim=-1)
-    query = normed[query_row * GRID_SIZE + query_col]
-    return (normed @ query).reshape(GRID_SIZE, GRID_SIZE)
+    normalized = F.normalize(features, dim=-1)
+    query_index = query_row * GRID_SIZE + query_col
+    query = normalized[query_index]
+    similarities = normalized @ query
+    return similarities.reshape(GRID_SIZE, GRID_SIZE)
 
 
 def _overlay(

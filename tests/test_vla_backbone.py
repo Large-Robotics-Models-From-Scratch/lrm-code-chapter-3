@@ -76,7 +76,7 @@ def test_embed_inputs_layout(backbone):
     assert mask.shape == (2, IMAGE_TOKENS + L + 1)
     assert bool((mask == 1).all())  # nothing padded here
 
-    table = backbone.language_backbone.get_input_embeddings()
+    table = backbone.fusion_transformer.get_input_embeddings()
     assert emb.dtype == table.weight.dtype
     text_rows = table(torch.tensor(ids))
     with torch.no_grad():
@@ -204,8 +204,8 @@ def test_malformed_images_rejected(backbone, dummy_state):
 def test_no_vocab_expansion(backbone):
     # Chapter 3 never touches the vocabulary: no placeholder rows, no
     # grown table, no resize. Chapter 4 owns vocabulary expansion.
-    assert backbone.language_backbone.config.vocab_size == SMOLLM_VOCAB
-    table = backbone.language_backbone.get_input_embeddings()
+    assert backbone.fusion_transformer.config.vocab_size == SMOLLM_VOCAB
+    table = backbone.fusion_transformer.get_input_embeddings()
     assert table.num_embeddings == SMOLLM_VOCAB
 
 

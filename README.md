@@ -2,7 +2,7 @@
 
 Companion code for **Chapter 3** of *Build a Large Robot Model (From Scratch)* (Manning).
 
-This chapter builds the **VLA backbone**: a frozen SigLIP vision encoder + a SmolLM2-135M language backbone + a state encoder, joined by **direct concatenation**. The two camera views and the state are projected to the language backbone's width and concatenated with the language input embeddings into one **observation prefix**, which the pretrained language backbone reads through `inputs_embeds` - so the language backbone is the fuser, and there is no separate fusion module on the main path. The output is a sequence of contextualized hidden states ready for an action head (added in Chapter 4).
+This chapter builds the **VLA backbone**: a frozen SigLIP vision encoder + a SmolLM2-135M Fusion Transformer + a state encoder, joined by **direct concatenation**. The two camera views and the state are projected to the Fusion Transformer's width and concatenated with the language input embeddings into one **observation prefix**, which the pretrained SmolLM2 stack reads through `inputs_embeds` - so that stack serves as the Fusion Transformer, and there is no separate fusion module on the main path. The output is a sequence of contextualized hidden states ready for an action head (added in Chapter 4).
 
 ## What you build
 
@@ -12,7 +12,7 @@ text   ──▶  SmolLM2 embedding table                ──▶  [B,  L,  576
 state  ──▶  StateEncoder (MLP)                     ──▶  [B,  1,  576]
      concatenated into one observation prefix, plus an attention
      mask and position IDs, fed via inputs_embeds
-     (the language backbone fuses; no separate fusion module)
+     (the Fusion Transformer fuses; no separate fusion module)
                           ▼
               [B, 392+L+1, 576] contextualized hidden states
 ```
@@ -41,9 +41,9 @@ contract.
 | Component | Choice |
 |---|---|
 | Vision encoder | SigLIP-base/16 (frozen) |
-| Language backbone | SmolLM2-135M (native tokenizer; **no vocabulary expansion**, in Ch 3 or Ch 4) |
-| Fusion | Direct concatenation: visual, language, and state input embeddings concatenated into one observation prefix, fed via `inputs_embeds`; the language backbone fuses (no separate fusion module) |
-| Hidden dim | 576 (the language backbone's native width) |
+| Fusion Transformer | SmolLM2-135M (native tokenizer; **no vocabulary expansion**, in Ch 3 or Ch 4) |
+| Fusion | Direct concatenation: visual, language, and state input embeddings concatenated into one observation prefix, fed via `inputs_embeds`; the Fusion Transformer fuses (no separate fusion module) |
+| Hidden dim | 576 (the Fusion Transformer's native width) |
 | Robot | SO-100 (6-DOF arm + 1 gripper) |
 | Camera input | both `observation.images.up` and `observation.images.side` (two cameras, 392 visual positions = 2 x 196) |
 
@@ -102,9 +102,9 @@ lrm-code-chapter-3/
 ├── src/ch03/                       # Importable Python package (the export contract)
 │   ├── __init__.py
 │   ├── vision_encoder.py           # PR 2 — SigLIP load + freeze + project
-│   ├── language_backbone.py        # PR 3 — SmolLM2, native tokenizer
+│   ├── language_backbone.py        # standalone SmolLM2 module (no numbered listing)
 │   ├── state_encoder.py            # PR 4 — 6→576 MLP
-│   ├── fusion_transformer.py       # optional separate-encoder fusion exercise (off main path)
+│   ├── separate_fuser.py           # optional separate-encoder fusion exercise (off main path)
 │   ├── vla_backbone.py             # PR 5 — VLABackbone, composes the above
 │   ├── viz_similarity.py           # PR 2 — patch self-similarity probe
 │   ├── preprocess.py               # PR 5 — bicubic antialiased resize to 224
@@ -130,7 +130,7 @@ lrm-code-chapter-3/
 │   ├── test_vision_encoder.py
 │   ├── test_language_backbone.py
 │   ├── test_state_encoder.py
-│   ├── test_fusion_transformer.py
+│   ├── test_separate_fuser.py
 │   ├── test_viz_similarity.py
 │   ├── test_guardrails.py
 │   ├── test_migration_parity.py
@@ -163,7 +163,7 @@ hidden = backbone(
 # tokenizer: native SmolLM2 (49,152 vocab) - never expanded
 ```
 
-`fusion_transformer.py` is the optional separate-encoder fusion exercise, kept off the main path; the shipped backbone concatenates the visual, language, and state input embeddings directly and lets the language backbone fuse them.
+`separate_fuser.py` is the optional separate-encoder fusion exercise, kept off the main path; the shipped backbone concatenates the visual, language, and state input embeddings directly and lets the pretrained `fusion_transformer` fuse them.
 
 Chapter 4 consumes this contract unchanged. Its action architectures either read the returned hidden states or extend the observation prefix between `embed_inputs` and `contextualize`; neither route expands the language vocabulary.
 

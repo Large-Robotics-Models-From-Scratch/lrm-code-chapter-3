@@ -15,17 +15,16 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
+# The SO-101's proprioceptive width, named for tests and for callers
+# that build a StateEncoder from the dataset contract rather than from
+# the default. Listing 3.3 spells the default out as 6.
 STATE_DIM = 6
 
 
 class StateEncoder(nn.Module):
     """Project ``[B, state_dim]`` state to a ``[B, 1, 576]`` embedding."""
 
-    def __init__(
-        self,
-        state_dim: int = STATE_DIM,
-        width: int = 576,
-    ) -> None:
+    def __init__(self, state_dim=6, width=576):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(state_dim, width),

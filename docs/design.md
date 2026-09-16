@@ -1,6 +1,6 @@
 # Chapter 3 Software Design
 
-> **Superseded by v5**: the shipped backbone is `VLABackbone` (the v3 name, kept), language model is `SmolLM2-135M`, hidden width is **576** (the language backbone's native width, no down-projection to 512), two cameras give **392** visual positions, and fusion is direct concatenation of the visual, language, and state input embeddings into one observation prefix fed to the language backbone via `inputs_embeds` (concat migration 2026-08-09). The language backbone is the fuser; `fusion_transformer.py` is only the optional separate-encoder exercise. Output contract: `[B, 392 + L + 1, 576]` contextualized hidden states. The APIs below are corrected for the load-bearing facts; some prose still reflects the older single-camera / separate-fusion plan.
+> **Superseded by v5**: the shipped backbone is `VLABackbone` (the v3 name, kept), language model is `SmolLM2-135M`, hidden width is **576** (the Fusion Transformer's native width, no down-projection to 512), two cameras give **392** visual positions, and fusion is direct concatenation of the visual, language, and state input embeddings into one observation prefix fed to the Fusion Transformer via `inputs_embeds` (concat migration 2026-08-09). A pretrained LLM, held on the backbone as `self.fusion_transformer`, is the fuser; `separate_fuser.py` is only the optional separate-encoder exercise. Output contract: `[B, 392 + L + 1, 576]` contextualized hidden states. The APIs below are corrected for the load-bearing facts; some prose still reflects the older single-camera / separate-fusion plan.
 
 Companion to `chapter_3_plan.md`. The plan locks the *what* — listings, exports, prose mapping. This doc locks the *how* — module APIs, notebook architecture, test strategy, dependency pinning, agent prompt.
 
@@ -20,7 +20,7 @@ Two paths, same end state — the reader runs `notebooks/ch03.ipynb` against the
 
 ### Notebook ↔ package
 
-**Type-along** listings (vision encoder, language backbone embeddings, state encoder, VLA backbone) live in the notebook namespace — the reader writes them, subsequent cells call their version. A byte-for-byte equivalent exists in `src/ch03/<module>.py` but is independent (no live binding) and serves tests, Ch 4 imports, and editor cross-reference.
+**Type-along** listings (vision encoder, language input embeddings, state encoder, VLA backbone) live in the notebook namespace — the reader writes them, subsequent cells call their version. A byte-for-byte equivalent exists in `src/ch03/<module>.py` but is independent (no live binding) and serves tests, Ch 4 imports, and editor cross-reference.
 
 **Provided utility** listings (patch self-similarity viz, plus the bonus tracking grid) are one-line imports from the package.
 
@@ -56,7 +56,7 @@ __all__ = [
 ]
 ```
 
-`FusionTransformer` is off the main path, so it is not re-exported; the optional exercise imports it from `ch03.fusion_transformer` directly.
+`SeparateEncoderFuser` is off the main path, so it is not re-exported; the optional exercise imports it from `ch03.separate_fuser` directly.
 
 ### `src/ch03/vision_encoder.py` (listing 3.1)
 
@@ -99,7 +99,9 @@ def tracking_grid(            # bonus notebook visualization
 ) -> matplotlib.figure.Figure: ...
 ```
 
-### `src/ch03/language_backbone.py` (listing 3.3)
+### `src/ch03/language_backbone.py` (extra module, no numbered listing)
+
+> In the locked chapter, listing 3.4 is the language-embedding cell (tokenizer, `pad_token = eos_token`, and the embedding-table lookup), which lives in `notebooks/ch03.ipynb` rather than in a module. `language_backbone.py` is an extra standalone module kept for tests and cross-reference; it no longer corresponds to a numbered listing.
 
 ```python
 class LanguageBackbone(nn.Module):
@@ -121,9 +123,9 @@ class LanguageBackbone(nn.Module):
         ...
 ```
 
-**No vocabulary expansion** — uses the native SmolLM tokenizer (49,152 vocab). The revised Chapter 4 contract does not expand it either: action architectures attach their own components instead.
+**No vocabulary expansion**: uses the native SmolLM tokenizer (49,152 vocab). The revised Chapter 4 contract does not expand it either: action architectures attach their own components instead.
 
-### `src/ch03/state_encoder.py` (listing 3.4)
+### `src/ch03/state_encoder.py` (listing 3.3)
 
 ```python
 class StateEncoder(nn.Module):
@@ -142,12 +144,12 @@ class StateEncoder(nn.Module):
 
 2-layer MLP (`Linear → GELU → Linear`). `state_dim=6` is locked by Ch 2 Table 2.2 (`observation.state: (6,)`, verified pr-7).
 
-### `src/ch03/fusion_transformer.py` (optional separate-encoder exercise)
+### `src/ch03/separate_fuser.py` (optional separate-encoder exercise)
 
 > Off the main path. The shipped backbone fuses by direct concatenation; this module is kept only as the optional separate-encoder fusion exercise.
 
 ```python
-class FusionTransformer(nn.Module):
+class SeparateEncoderFuser(nn.Module):
     def __init__(
         self,
         hidden_dim: int = 576,
@@ -166,18 +168,18 @@ class FusionTransformer(nn.Module):
 
 Causal self-attention via upper-triangular mask. Pre-norm.
 
-### `src/ch03/vla_backbone.py` (listing 3.6)
+### `src/ch03/vla_backbone.py` (listings 3.5, 3.6, and 3.7)
 
-Fusion is direct concatenation: the visual and state input embeddings are concatenated with the language input embeddings looked up from SmolLM2's own table, forming the observation prefix that the language backbone reads through `inputs_embeds`. The pretrained language backbone is the fuser (no separate fusion module on the main path). Only the language stream carries vocabulary IDs, so the tokenizer, the embedding table (49,152 rows), and `config.vocab_size` are all untouched.
+Fusion is direct concatenation: the visual and state input embeddings are concatenated with the language input embeddings looked up from SmolLM2's own table, forming the observation prefix that the Fusion Transformer reads through `inputs_embeds`. The pretrained SmolLM2 stack serves as the Fusion Transformer (no separate fusion module on the main path). Only the language stream carries vocabulary IDs, so the tokenizer, the embedding table (49,152 rows), and `config.vocab_size` are all untouched.
 
 Two things the backbone deliberately does NOT own, because owning them once is the point:
 
 - **The vision path.** `self.vision_encoder = VisionEncoder(hidden_dim=576)` composes listing 3.1's encoder as-is. Frozen SigLIP, the bicubic antialiased resize to 224, the 768->576 projection, and the `[0,1]`->`[-1,1]` pixel normalization buffers all live in `vision_encoder.py`. `embed_inputs` calls it once and gets `[B*2, 196, 576]` back already projected, so there is no `img_proj` on the backbone.
-- **A second embedding table.** The language stream is embedded through `self.language_backbone.get_input_embeddings()`, so the model holds exactly one table, the native one. Measured: 135,294,336 trainable / 92,884,224 frozen. `tests/test_vla_backbone.py` guards the layout with a per-position identity check and a `< 140_000_000` trainable budget.
+- **A second embedding table.** The language stream is embedded through `self.fusion_transformer.get_input_embeddings()`, so the model holds exactly one table, the native one. Measured: 135,294,336 trainable / 92,884,224 frozen. `tests/test_vla_backbone.py` guards the layout with a per-position identity check and a `< 140_000_000` trainable budget.
 
 ```python
 class VLABackbone(nn.Module):
-    def __init__(self) -> None: ...  # width 576 (language-backbone native)
+    def __init__(self) -> None: ...  # width 576 (SmolLM2 native)
 
     def embed_inputs(
         self,
@@ -285,9 +287,9 @@ tests/
 ├── test_smoke.py          # ch03 imports cleanly
 ├── test_preprocess.py     # shapes + bicubic/antialias parity + one shared resize
 ├── test_vision_encoder.py # frozen-param + shape + dtype
-├── test_language_backbone.py # tokenize + forward shape + vocab size assertion
+├── test_language_backbone.py # extra module: tokenize + forward shape + vocab size
 ├── test_state_encoder.py  # shape + nonlinearity smoke
-├── test_fusion_transformer.py # mask shape + causality + grad flow
+├── test_separate_fuser.py # mask shape + causality + grad flow
 ├── test_viz_similarity.py # probe helper shapes + query indexing
 ├── test_guardrails.py     # source scan: no add_tokens / resize_token_embeddings / masked_scatter
 ├── test_migration_parity.py # pins the retired construction against the shipped one
@@ -301,9 +303,9 @@ tests/
 |---|---|
 | `preprocess.py` | Shapes for single and batched frames, values stay in `[0, 1]`, the resize equals bicubic + `align_corners=False` + `antialias=True` exactly and differs from bilinear or non-antialiased variants, and `VisionEncoder`'s internal resize is the same implementation (identity check on the imported helper, plus feature-level equality between native and pre-resized frames) |
 | `vision_encoder.py` | Assert all SigLIP params have `requires_grad=False`, output shape `[2, 196, 576]` per camera, dtype `float32` |
-| `language_backbone.py` | Assert vocab size == 49,152 (catches silent SmolLM revisions), tokenize+forward shape, projection trainable |
+| `language_backbone.py` (extra module) | Assert vocab size == 49,152 (catches silent SmolLM revisions), tokenize+forward shape, projection trainable |
 | `state_encoder.py` | Shape `[B, state_dim] → [B, 1, 576]`, GELU nonlinearity present |
-| `fusion_transformer.py` | Causal mask is upper-triangular `-inf`, output shape == input shape, gradient flows (optional exercise module) |
+| `separate_fuser.py` | Causal mask is upper-triangular `-inf`, output shape == input shape, gradient flows (optional exercise module) |
 | `vla_backbone.py` | `embed_inputs` returns `(input_embeddings, attention_mask, position_ids)` with every vector at the right observation-prefix position, padded batches keep the state position's logical index at `392 + L_valid`, and the ordinary `forward` returns `[B, 392+L+1, 576]`; integration-marked |
 
 ### Fixtures (`conftest.py`)

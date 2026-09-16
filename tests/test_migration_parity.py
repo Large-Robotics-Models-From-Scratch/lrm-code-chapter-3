@@ -38,7 +38,7 @@ def _legacy_splice_forward(
     weights are identical; only the sequence construction differs.
     """
     B = images.shape[0]
-    base = backbone.language_backbone.get_input_embeddings()
+    base = backbone.fusion_transformer.get_input_embeddings()
 
     # Grow a throwaway table two rows past the vocab, as the old
     # __init__ did. The extra rows are inert: the splice overwrites
@@ -68,7 +68,7 @@ def _legacy_splice_forward(
     st_mask = (sequence_ids == STATE_ID).unsqueeze(-1)
     emb = emb.masked_scatter(img_mask, img)
     emb = emb.masked_scatter(st_mask, state_tok)
-    return backbone.language_backbone(
+    return backbone.fusion_transformer(
         inputs_embeds=emb
     ).last_hidden_state
 

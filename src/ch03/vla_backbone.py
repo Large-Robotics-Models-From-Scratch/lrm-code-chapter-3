@@ -1,10 +1,12 @@
 """VLA backbone: vision, language, and state in one sequence.
 
 This is the chapter's deliverable and the interface Chapter 4 builds
-on. ``VLABackbone`` encodes each input stream to the language
-backbone's width and concatenates the streams into one multimodal
-sequence, which the pretrained SmolLM2 contextualizes. There is no
-separate fusion transformer: the language backbone is the fuser.
+on. ``VLABackbone`` encodes each input stream to the Fusion
+Transformer's width and concatenates the streams into one multimodal
+sequence, which the pretrained SmolLM2 contextualizes. A pretrained LLM
+serves as the Fusion Transformer: its tokenizer and embedding table
+produce the language input embeddings, and its Transformer stack
+processes the assembled observation prefix.
 
 The fixed observation-prefix order is
 
@@ -70,12 +72,12 @@ class VLABackbone(nn.Module):
         # [0,1] -> [-1,1] pixel normalization all live inside it, so
         # the backbone owns no second copy of any of them.
         self.vision_encoder = VisionEncoder(hidden_dim=SMOLLM_WIDTH)
-        self.state_encoder = StateEncoder(6, SMOLLM_WIDTH)
+        self.state_encoder = StateEncoder(state_dim=6, width=SMOLLM_WIDTH)
         self.tokenizer = AutoTokenizer.from_pretrained(SMOLLM_MODEL)
         # SmolLM2 ships no dedicated padding token; reuse end-of-text.
         # This maps an existing id, so the vocabulary does not grow.
         self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.language_backbone = AutoModel.from_pretrained(SMOLLM_MODEL)
+        self.fusion_transformer = AutoModel.from_pretrained(SMOLLM_MODEL)
 
     def embed_inputs(
         self,
@@ -102,7 +104,7 @@ class VLABackbone(nn.Module):
                 f"images must be [B, {NUM_CAMERAS}, 3, H, W]; got "
                 f"{tuple(images.shape)}."
             )
-        embed_tokens = self.language_backbone.get_input_embeddings()
+        embed_tokens = self.fusion_transformer.get_input_embeddings()
         device = embed_tokens.weight.device
         images = images.to(device)
         input_ids = input_ids.to(device)
@@ -165,7 +167,7 @@ class VLABackbone(nn.Module):
         hidden states of the same shape. Vocabulary ids play no role
         here: the backbone runs through ``inputs_embeds``.
         """
-        outputs = self.language_backbone(
+        outputs = self.fusion_transformer(
             inputs_embeds=input_embeddings,
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -190,4 +192,5 @@ class VLABackbone(nn.Module):
         embeddings, mask, position_ids = self.embed_inputs(
             images, input_ids, state, text_attention_mask
         )
-        return self.contextualize(embeddings, mask, position_ids)
+        hidden_states = self.contextualize(embeddings, mask, position_ids)
+        return hidden_states

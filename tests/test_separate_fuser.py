@@ -1,12 +1,12 @@
-"""Unit tests for FusionTransformer (pure torch, no model download)."""
+"""Unit tests for SeparateEncoderFuser (pure torch, no model download)."""
 
 import torch
 
-from ch03.fusion_transformer import FusionTransformer
+from ch03.separate_fuser import SeparateEncoderFuser
 
 
 def test_causal_mask_is_upper_triangular():
-    mask = FusionTransformer.causal_mask(4, torch.device("cpu"))
+    mask = SeparateEncoderFuser.causal_mask(4, torch.device("cpu"))
     # True blocks attention; row i may see columns 0..i only.
     assert mask.dtype == torch.bool
     assert not mask[0, 0]  # token 0 sees itself
@@ -15,14 +15,14 @@ def test_causal_mask_is_upper_triangular():
 
 
 def test_output_shape_matches_input():
-    fusion = FusionTransformer(hidden_dim=576, num_layers=6, num_heads=9)
+    fusion = SeparateEncoderFuser(hidden_dim=576, num_layers=6, num_heads=9)
     tokens = torch.rand(2, 50, 576)
     out = fusion(tokens)
     assert out.shape == tokens.shape
 
 
 def test_output_attentions_shape():
-    fusion = FusionTransformer(
+    fusion = SeparateEncoderFuser(
         hidden_dim=576, num_layers=6, num_heads=9
     ).eval()
     tokens = torch.rand(2, 50, 576)
@@ -32,7 +32,7 @@ def test_output_attentions_shape():
 
 
 def test_gradients_flow():
-    fusion = FusionTransformer()
+    fusion = SeparateEncoderFuser()
     tokens = torch.rand(2, 50, 576)
     fusion(tokens).mean().backward()
     grad = fusion.blocks[0].attn.in_proj_weight.grad
@@ -40,7 +40,7 @@ def test_gradients_flow():
 
 
 def test_padding_mask_accepted():
-    fusion = FusionTransformer().eval()
+    fusion = SeparateEncoderFuser().eval()
     tokens = torch.rand(2, 50, 576)
     mask = torch.zeros(2, 50, dtype=torch.bool)
     mask[:, -5:] = True  # pad the last five positions
@@ -52,7 +52,7 @@ def test_causal_mask_blocks_future_influence():
     """Behavioral causality: changing a future token must not change
     the outputs at earlier positions."""
     torch.manual_seed(0)
-    fusion = FusionTransformer(num_layers=2, dropout=0.0).eval()
+    fusion = SeparateEncoderFuser(num_layers=2, dropout=0.0).eval()
     tokens = torch.rand(1, 6, 576)
     perturbed = tokens.clone()
     perturbed[:, -1] = torch.rand(576)  # only the last (future) token
@@ -66,7 +66,7 @@ def test_padding_mask_zeroes_pad_influence():
     """Behavioral masking: values at padded positions must not affect
     a later non-padded token's output."""
     torch.manual_seed(0)
-    fusion = FusionTransformer(num_layers=2, dropout=0.0).eval()
+    fusion = SeparateEncoderFuser(num_layers=2, dropout=0.0).eval()
     tokens = torch.rand(1, 10, 576)
     mask = torch.zeros(1, 10, dtype=torch.bool)
     mask[:, 5:7] = True  # positions 5-6 are padding (mid-sequence)
